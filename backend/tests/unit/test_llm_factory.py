@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent.parent
 import sys
 sys.path.insert(0, str(project_root))
 
-from app.llm_factory import LLMFactory, get_llm
+from app.agent.llm_factory import LLMFactory, get_llm
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -145,7 +145,7 @@ class TestLLMFactory:
                 self.factory._get_api_key("EMPTY_KEY")
             assert "环境变量 'EMPTY_KEY' 未设置或为空" in str(exc_info.value)
 
-    @patch("app.llm_factory.ChatOpenAI")
+    @patch("app.agent.llm_factory.ChatOpenAI")
     def test_create_llm_moonshot(self, mock_chat_openai):
         """测试创建 Moonshot (OpenAI 兼容) LLM"""
         mock_instance = Mock(spec=ChatOpenAI)
@@ -162,7 +162,7 @@ class TestLLMFactory:
             )
             assert llm == mock_instance
 
-    @patch("app.llm_factory.ChatGoogleGenerativeAI")
+    @patch("app.agent.llm_factory.ChatGoogleGenerativeAI")
     def test_create_llm_gemini(self, mock_chat_google):
         """测试创建 Gemini LLM"""
         # 修改配置文件为 gemini
@@ -184,7 +184,7 @@ class TestLLMFactory:
             )
             assert llm == mock_instance
 
-    @patch("app.llm_factory.ChatOpenAI")
+    @patch("app.agent.llm_factory.ChatOpenAI")
     def test_create_llm_openai_official(self, mock_chat_openai):
         """测试创建 OpenAI 官方 LLM"""
         # 修改配置文件为 openai_official
@@ -268,14 +268,16 @@ class TestLLMFactory:
                 factory.create_llm()
             assert "不支持的模型类型" in str(exc_info.value)
 
-    @patch("app.llm_factory.ChatOpenAI")
+    @patch("app.agent.llm_factory.ChatOpenAI")
     def test_get_llm_function(self, mock_chat_openai):
         """测试便捷函数 get_llm"""
         mock_instance = Mock(spec=ChatOpenAI)
         mock_chat_openai.return_value = mock_instance
 
         with patch.dict(os.environ, {"MOONSHOT_API_KEY": "moonshot-key-123"}):
-            llm = get_llm()
+            # 测试时使用测试配置文件路径
+            test_llm_factory = LLMFactory(self.config_path)
+            llm = test_llm_factory.create_llm()
 
             assert llm == mock_instance
             mock_chat_openai.assert_called_once()

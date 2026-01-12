@@ -15,7 +15,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 class LLMFactory:
     """LLM 工厂类，负责创建和管理 LLM 实例"""
 
-    def __init__(self, config_path: str = "llm_config.json"):
+    def __init__(self, config_path: str = "../../llm_config.json"):
         """初始化工厂，加载配置文件
 
         Args:
