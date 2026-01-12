@@ -37,3 +37,10 @@ build/
 *.db-shm
 *.db-wal
 *.db-journal
+
+# env
+# Security
+.env
+.env.local
+.env.*
+! .env.example

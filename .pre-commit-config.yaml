@@ -3,8 +3,11 @@ repos:
     hooks:
       - id: backend-tests
         name: Backend TDD Check (pytest)
-        entry: bash -c "cd backend && python -m pytest"
+        # 核心修改：只监听 backend 目录下的变化
+        files: ^backend/
+        # 命令保持不变
+        entry: bash -c "cd backend && .venv/Scripts/python -m pytest"
         language: system
-        types: [python]
+        # 去掉 types: [python]，因为我们也想监听 backend 下的非 python 文件变化（比如 sql 文件）
         pass_filenames: false
         stage: [commit]

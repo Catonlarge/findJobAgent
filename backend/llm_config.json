@@ -1,0 +1,23 @@
+{
+    "active_model": "moonshot", 
+    "providers": {
+      "moonshot": {
+        "base_url": "https://api.moonshot.cn/v1",
+        "model_name": "kimi-k2-turbo-preview",
+        "env_key_map": "MOONSHOT_API_KEY",
+        "temperature": 0.6
+      },
+      "gemini": {
+        "base_url": null,
+        "model_name": "gemini-2.5-flash",
+        "env_key_map": "GEMINI_API_KEY",
+        "temperature": 0.7
+      },
+      "openai_official": {
+        "base_url": "https://api.openai.com/v1",
+        "model_name": "gpt-4-turbo",
+        "env_key_map": "OPENAI_API_KEY",
+        "temperature": 0.6
+      }
+    }
+  }

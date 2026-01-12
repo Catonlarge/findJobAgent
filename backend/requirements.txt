@@ -6,7 +6,9 @@ httpx>=0.26.0
 # AI Agent & Logic
 langgraph>=0.0.20
 langchain-openai>=0.0.5
+langchain-google-genai>=0.0.7
 python-dotenv>=1.0.0
+pydantic-settings>=2.1.0
 
 # Database & ORM
 sqlmodel>=0.0.14
