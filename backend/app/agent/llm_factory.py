@@ -6,6 +6,7 @@
 
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 from langchain_openai import ChatOpenAI
@@ -15,13 +16,18 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 class LLMFactory:
     """LLM 工厂类，负责创建和管理 LLM 实例"""
 
-    def __init__(self, config_path: str = "../../llm_config.json"):
+    def __init__(self, config_path: str = None):
         """初始化工厂，加载配置文件
 
         Args:
-            config_path: 配置文件路径，默认为 llm_config.json
+            config_path: 配置文件路径，如果为 None 则使用相对于项目根目录的默认路径
         """
-        self.config_path = config_path
+        if config_path is None:
+            # 默认路径：从 backend/app/agent/llm_factory.py 到 backend/llm_config.json
+            default_path = Path(__file__).parent.parent.parent / "llm_config.json"
+            self.config_path = str(default_path)
+        else:
+            self.config_path = config_path
         self._config = None
         self._loaded_config = None
 
