@@ -24,4 +24,5 @@ class User(TimestampModel, table=True):
 
     # 基础信息 JSON（如姓名、城市等）
     # 使用 JSON 类型灵活存储用户基础信息，不需要严格表结构
-    basic_info: Optional[Dict[str, Any]] = Field(default={}, sa_column=Column(JSON))
+    # 使用 default_factory=dict 避免可变默认参数陷阱：每个实例获得独立的字典
+    basic_info: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))

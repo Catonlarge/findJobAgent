@@ -45,6 +45,37 @@ class TestUserModel:
         assert user.basic_info == {}  # 默认值
         assert isinstance(user.created_at, datetime)
 
+    def test_user_basic_info_not_shared(self):
+        """测试 basic_info 可变默认参数不会导致数据污染（Issue #1）"""
+        # 创建两个用户，都不提供 basic_info
+        user1 = User(username="user1")
+        user2 = User(username="user2")
+
+        # 验证每个用户拥有独立的字典对象
+        assert user1.basic_info is not user2.basic_info
+        assert user1.basic_info == {}
+        assert user2.basic_info == {}
+
+        # 修改 user1 的 basic_info
+        user1.basic_info["name"] = "Alice"
+        user1.basic_info["city"] = "Shanghai"
+
+        # 验证 user2 的 basic_info 没有被污染
+        assert user2.basic_info == {}
+        assert "name" not in user2.basic_info
+        assert "city" not in user2.basic_info
+
+        # 进一步测试多个用户
+        user3 = User(username="user3")
+        user4 = User(username="user4")
+
+        # 修改 user3
+        user3.basic_info["age"] = 30
+
+        # 验证 user4 不受影响
+        assert user4.basic_info == {}
+        assert "age" not in user4.basic_info
+
 class TestProfileSectionModel:
     """测试画像切片模型"""
 
