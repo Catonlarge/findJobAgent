@@ -96,7 +96,7 @@ class TestDocumentModel:
         assert doc.type == DocumentType.RAW_RESUME
         assert doc.content == "5 years Python experience..."
         assert isinstance(doc.created_at, datetime)
-        assert doc.created_at.tzinfo is None  # UTC 时间
+        assert doc.created_at.tzinfo is not None  # timezone-aware datetime with UTC
 
     def test_all_document_types(self):
         """测试所有文档类型"""
