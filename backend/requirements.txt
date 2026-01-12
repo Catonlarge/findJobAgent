@@ -1,0 +1,19 @@
+# Web Framework & Async
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+httpx>=0.26.0
+
+# AI Agent & Logic
+langgraph>=0.0.20
+langchain-openai>=0.0.5
+python-dotenv>=1.0.0
+
+# Database & ORM
+sqlmodel>=0.0.14
+aiosqlite>=0.19.0
+pydantic>=2.6.0
+
+# Testing (TDD Core)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
