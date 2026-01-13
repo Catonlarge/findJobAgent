@@ -75,6 +75,13 @@ class AgentState(TypedDict, total=False):
     # 质量检查标志 - 指示生成的内容是否通过质量检验，默认为 False
     quality_check_passed: bool
 
+    # 待确认的资产提案 - T2-01.2 隐性资产提取器
+    # 若此字段非空，Router 将优先拦截 "1/0" 指令
+    pending_proposal: Optional[Dict[str, Any]]
+
+    # 用户 ID - 用于数据库操作 (从 API 层传递或默认值)
+    user_id: int
+
 
 # AgentState 的默认字段值
 DEFAULT_AGENT_STATE = {
@@ -85,5 +92,7 @@ DEFAULT_AGENT_STATE = {
     "evaluation_result": None,
     "generated_artifact": None,
     "iteration_count": 0,
-    "quality_check_passed": False
+    "quality_check_passed": False,
+    "pending_proposal": None,
+    "user_id": 1
 }

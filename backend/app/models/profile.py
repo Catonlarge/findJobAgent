@@ -20,6 +20,7 @@ class ProfileSectionKey(str, Enum):
     BEHAVIORAL_TRAITS = "behavioral_traits"
     EDUCATION = "education"
     SUMMARY = "summary"
+    CAREER_POTENTIAL = "career_potential"  # 职业潜能与想法 (T2-01.2)
 
 class ProfileSection(TimestampModel, table=True):
     """
