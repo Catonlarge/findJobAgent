@@ -1,5 +1,8 @@
 # CLAUDE.md - FindJobAgent (V7.1 Architecture)
 
+## Context and docs
+- Before coding, head to the `D:\programming_enviroment\findJobAgent\docs\` path to check the req docs, tech stack, project directory, and database design.
+
 ## Commands
 - **Backend (Python - Windows)**:
   - **Context Rule**: Execute from Project Root (D:\programming_enviroment\findJobAgent).
@@ -20,6 +23,50 @@
   - Run Dev: `npm run dev --prefix frontend`
   - Install Deps: `npm install --prefix frontend`
   - *Strict Rule*: Mantine UI only. **NO Tailwind CSS**.
+
+## Windows Bash Best Practices (Critical for Claude)
+
+**Root Cause Analysis**: Bash command failures stem from:
+- Windows path handling requiring `\` in paths but shell escaping demands attention
+- Mixed Windows/Unix styles causing resolution issues
+- Venv scripts are in `Scripts/` (not `bin`) on Windows
+- Working directory critically affects relative path resolution
+
+**Verified Success Patterns:**
+
+1. **Execute from Project Root** (D:\programming_enviroment\findJobAgent):
+   ```bash
+   backend/.venv/Scripts/python.exe backend/run.py
+   backend/.venv/Scripts/python.exe -m pytest backend/tests -v
+   ```
+
+2. **Use Project Root-Relative Paths** - never complex `../../../` navigation:
+   ```bash
+   # Right: from project root
+   backend/.venv/Scripts/python.exe -c "..."
+
+   # Wrong: complex relative paths that break context
+   cd somewhere && ../../.venv/python.exe ...
+   ```
+
+3. **Avoid Chain Commands with &&** when path resolution changes:
+   - Prefer separate single commands from stable directory
+   - Each command's pwd affects the next chained command
+
+4. **Python Module Discovery** - scripts run in backend/ need correct sys.path:
+   ```python
+   import sys
+   sys.path.insert(0, '.')  # Makes 'app' discoverable
+   # or use: sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+   ```
+
+5. **File Operations** - Always prefer project-root relative paths:
+   ```bash
+   dir backend\app\models      # List models
+   cat backend/app/models/*.py  # Read all model files
+   ```
+
+**Key Lesson**: Windows venv paths are extremely strict. The working directory when invoking `.venv/Scripts/python.exe` determines module discovery success. Always operate from project root using project-relative paths.
 
 ## Architecture (V7.1 Double Tower)
 - **Root Strategy**: Monorepo Structure.
@@ -45,6 +92,50 @@
   - **Async**: Default to `async/await` for I/O operations.
 - **TypeScript**:
   - Define explicit Interfaces matching backend Pydantic models. No `any`.
+
+## Windows Bash Best Practices (Critical for Claude)
+
+**Root Cause Analysis**: Bash command failures stem from:
+- Windows path handling requiring `\` in paths but shell escaping demands attention
+- Mixed Windows/Unix styles causing resolution issues
+- Venv scripts are in `Scripts/` (not `bin`) on Windows
+- Working directory critically affects relative path resolution
+
+**Verified Success Patterns:**
+
+1. **Execute from Project Root** (D:\programming_enviroment\findJobAgent):
+   ```bash
+   backend/.venv/Scripts/python.exe backend/run.py
+   backend/.venv/Scripts/python.exe -m pytest backend/tests -v
+   ```
+
+2. **Use Project Root-Relative Paths** - never complex `../../../` navigation:
+   ```bash
+   # Right: from project root
+   backend/.venv/Scripts/python.exe -c "..."
+
+   # Wrong: complex relative paths that break context
+   cd somewhere && ../../.venv/python.exe ...
+   ```
+
+3. **Avoid Chain Commands with &&** when path resolution changes:
+   - Prefer separate single commands from stable directory
+   - Each command's pwd affects the next chained command
+
+4. **Python Module Discovery** - scripts run in backend/ need correct sys.path:
+   ```python
+   import sys
+   sys.path.insert(0, '.')  # Makes 'app' discoverable
+   # or use: sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+   ```
+
+5. **File Operations** - Always prefer project-root relative paths:
+   ```bash
+   dir backend\app\models      # List models
+   cat backend/app/models/*.py  # Read all model files
+   ```
+
+**Key Lesson**: Windows venv paths are extremely strict. The working directory when invoking `.venv/Scripts/python.exe` determines module discovery success. Always operate from project root using project-relative paths.
 
 ## Workflow Protocols
 **When I use the keyword "Implement: <Feature>", strict adherence to this cycle is required:**
