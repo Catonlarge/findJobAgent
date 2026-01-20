@@ -1,90 +1,39 @@
 """
-隐性资产提取器节点 (T2-01.2)
+Chat & Profile 子图节点 (T2-01.2)
 
-该节点负责从用户消息中提取有价值的职业信息，并生成待确认的提案。
-支持用户反馈调整模式。
-支持多轮对话累积信息，当信息量足够时生成提案。
-这是一个子图
+该子图负责：
+1. ChatBot: 与用户进行自然对话，引导分享职业信息
+2. ProfileLoader: 从 L1 数据库加载用户观察摘要
+3. Profiler: 静默监听对话，挖掘用户的技能、特质、经历片段、偏好
+4. Router: 决定继续聊天还是进入 proposal_and_refine 子图
+
+支持多轮对话累积信息，当信息量足够时触发整理阶段。
 """
 
-from typing import Annotated, List, TypedDict, Optional
-import uuid
+from typing import Optional
 
-from langgraph.graph import add_messages
 from langgraph.graph.state import RunnableConfig
-from sqlmodel import false
-from app.agent.llm_factory import get_llm
-from app.agent.models import AssetProposal, EmptyProposal, ProfilerOutput
-from langchain_core.messages import BaseMessage, AIMessage, SystemMessage, HumanMessage
+from langchain_core.messages import BaseMessage, AIMessage, SystemMessage
 
-# 导入通用工具函数
+from app.agent.llm_factory import get_llm
+from app.agent.models import ProfilerOutput
 from app.agent.sharednodes.user_utils import get_or_create_user
 from app.agent.subgraphs.asset_extraction.utils import save_observation_to_l1, get_existing_observations_summary
-
-# 导入本子图的提示词模板
 from app.agent.subgraphs.asset_extraction.prompts import (
     CHATBOT_SYSTEM_PROMPT_TEMPLATE,
     CHATBOT_WELCOME_MESSAGE,
     CHATBOT_FALLBACK_MESSAGE,
     EMPTY_USER_PROFILE_SNAPSHOT,
-    EXTRACTOR_SYSTEM_PROMPT,
-    EXTRACTOR_REFINEMENT_PROMPT,
-    ASSET_CONFIRMATION_TEMPLATE,
-    ASSET_CONFIRMATION_TEMPLATE_REFINED,
-    SECTION_DISPLAY_MAP,
     PROFILER_SYSTEM_PROMPT,
-    PROFILER_SYSTEM_PROMPT_WITH_PROFILE
+    PROFILER_SYSTEM_PROMPT_WITH_PROFILE,
 )
+from app.agent.subgraphs.asset_extraction.chat_and_profile.state import ChatAndProfileState
 
 
-# state定义
-class chatState(TypedDict, total=false):
-    """
-    chat状态: 这是 ChatBot、Profiler 和 Router 共享的上下文。
-    """
-    # --- 1. 短期记忆 (Short-term Memory) ---
-    # 作用：记录当前的对话流。
-    # 机制：add_messages 是个 reducer，负责把新消息追加到列表末尾。
-    messages: Annotated[List[BaseMessage], add_messages]
+# =============================================================================
+# 辅助函数
+# =============================================================================
 
-    # --- 2. 长期记忆快照 (Long-term Memory Snapshot) ---
-    # 作用：ChatBot 在开口说话前必须知道"你是谁"，Profiler 需要它做增量去重
-    # 来源：在每次对话开始前，从 L1 数据库拉取并渲染成文本
-    # 格式示例："技能：Python (入门)\n- 偏好：不喜欢说教"
-    # 说明：L1 包含所有历史观察（泥沙层），由 profileLoaderNode 在会话开始时加载一次
-    l1_observations_summary: str
-
-    # --- 3. 隐性思维流 (Hidden Thought Stream) ---
-    # 作用：Profiler 节点分析完对话后，将决策信息写入这里
-    # 用途：给 Router 节点看，决定是否进入 Editor 子图进行资产整理
-    #
-    # 字段含义：
-    #   - has_new_info: bool - 是否发现了新信息
-    #   - new_observation_count: int - 本次提取到的新观察数量
-    #   - is_ready_to_refine: bool - 是否应该进入整理阶段
-    #     判断原则（满足任一即触发）：
-    #       1. 本轮对话会话累积的新信息 >= 10 条
-    #       2. 用户主动表达结束闲聊意图（TODO）
-    #       3. 信息已足够形成完整亮点/项目点（TODO）
-    #   - analysis_summary: str - 分析摘要（调试用）
-    last_turn_analysis: Optional[dict]
-
-    # --- 4. 会话累积计数器 (Session Accumulator) ---
-    # 作用：记录当前对话会话中累积提取到的新观察总数
-    # 用途：用于判断是否达到进入整理阶段的阈值
-    # 说明：每次 profilerNode 成功保存观察时累加，进入整理阶段后重置为 0
-    session_new_observation_count: int
-
-    # --- 5. 最新用户消息缓存 (Latest User Message Cache) ---
-    # 作用：chatNode 缓存最新用户消息，供 profilerNode 使用
-    # 原因：chatNode 和 profilerNode 串行执行，messages[-1] 会取到 AI 回复而非用户输入
-    # 说明：chatNode 负责更新此字段，profilerNode 直接读取
-    last_user_message: Optional[BaseMessage]
-
-
-
-
-# 辅助函数：从 config 中获取 username
 def _get_username_from_config(config: RunnableConfig) -> str:
     """
     从 LangGraph config 中获取 username
@@ -107,8 +56,11 @@ def _get_username_from_config(config: RunnableConfig) -> str:
     return username
 
 
-# LangGraph 节点：负责加载用户画像快照（从 L1）
-def profileLoaderNode(_state: chatState, config: RunnableConfig) -> chatState:
+# =============================================================================
+# LangGraph 节点定义
+# =============================================================================
+
+def profile_loader_node(state: ChatAndProfileState, config: RunnableConfig) -> ChatAndProfileState:
     """
     ProfileLoader 节点：从 L1 数据库加载用户观察摘要到 State
 
@@ -124,11 +76,11 @@ def profileLoaderNode(_state: chatState, config: RunnableConfig) -> chatState:
     - 用于 ChatBot 了解用户背景，Profiler 做增量去重
 
     Args:
-        _state: 当前对话状态（此节点不依赖 state，仅保留签名兼容性）
+        state: 当前对话状态（此节点不依赖 state，仅保留签名兼容性）
         config: LangGraph 运行配置，需包含 config["configurable"]["username"]
 
     Returns:
-        chatState: 更新后的状态，包含 l1_observations_summary
+        ChatAndProfileState: 更新后的状态，包含 l1_observations_summary
     """
     print("--- 进入 ProfileLoader 节点 ---")
 
@@ -149,13 +101,13 @@ def profileLoaderNode(_state: chatState, config: RunnableConfig) -> chatState:
     else:
         print(f"[ProfileLoader] 已加载 {l1_summary.count(chr(10))} 行观察摘要")
 
-    # 4. 返回 L1 摘要到 state（供 chatNode 和 profilerNode 复用）
+    # 4. 返回 L1 摘要到 state（供 chat_node 和 profiler_node 复用）
     return {
         "l1_observations_summary": l1_summary
     }
 
 
-def chatNode(state: chatState, _config: RunnableConfig) -> chatState:
+def chat_node(state: ChatAndProfileState, _config: RunnableConfig) -> ChatAndProfileState:
     """
     ChatBot 节点：负责跟用户愉快的聊天，除此之外什么也不干
 
@@ -170,14 +122,14 @@ def chatNode(state: chatState, _config: RunnableConfig) -> chatState:
         _config: LangGraph 运行配置（此节点不依赖 config，保留签名兼容性）
 
     Returns:
-        chatState: 更新后的状态，包含新的 AI 回复消息
+        ChatAndProfileState: 更新后的状态，包含新的 AI 回复消息
     """
     print("--- 进入 ChatBot 节点 ---")
 
     # 1. 获取对话历史
     messages = state.get("messages", [])
 
-    # 2. 获取最新用户消息（缓存到 state 供 profilerNode 使用）
+    # 2. 获取最新用户消息（缓存到 state 供 profiler_node 使用）
     latest_user_message = None
     for msg in reversed(messages):
         if msg.type == "human":
@@ -192,9 +144,9 @@ def chatNode(state: chatState, _config: RunnableConfig) -> chatState:
     # 4. 处理空消息情况：发送欢迎语
     if not messages:
         # 如果没有历史消息，发送欢迎语（使用提示词常量）
-        welcome_msg_uuid = str(uuid.uuid4())
+        # LangGraph 的 add_messages reducer 会自动生成 ID
         return {
-            "messages": [AIMessage(content=CHATBOT_WELCOME_MESSAGE, id=welcome_msg_uuid)],
+            "messages": [AIMessage(content=CHATBOT_WELCOME_MESSAGE)],
             "last_user_message": None
         }
 
@@ -215,12 +167,10 @@ def chatNode(state: chatState, _config: RunnableConfig) -> chatState:
         # 调用 LLM（流式输出在调用层处理，节点只负责状态更新）
         response = llm.invoke(lc_messages)
 
-        # 生成 UUID 用于血缘追踪
-        ai_msg_uuid = str(uuid.uuid4())
-
         # 7. 返回更新后的状态（添加 AI 回复到消息列表 + 缓存用户消息）
+        # LangGraph 的 add_messages reducer 会自动生成 ID
         return {
-            "messages": [AIMessage(content=response.content, id=ai_msg_uuid)],
+            "messages": [response],  # 直接使用 LLM 返回的 response
             "last_user_message": latest_user_message
         }
 
@@ -228,16 +178,14 @@ def chatNode(state: chatState, _config: RunnableConfig) -> chatState:
         # LLM 调用失败时的降级处理（使用提示词常量）
         print(f"[ChatBot Error] LLM 调用失败: {str(e)}")
 
-        # 生成 UUID 用于血缘追踪
-        fallback_msg_uuid = str(uuid.uuid4())
-
+        # LangGraph 的 add_messages reducer 会自动生成 ID
         return {
-            "messages": [AIMessage(content=CHATBOT_FALLBACK_MESSAGE, id=fallback_msg_uuid)],
+            "messages": [AIMessage(content=CHATBOT_FALLBACK_MESSAGE)],
             "last_user_message": latest_user_message
         }
-    
 
-def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
+
+def profiler_node(state: ChatAndProfileState, config: RunnableConfig) -> ChatAndProfileState:
     """
     Profiler 节点：侧写师，后台默默分析对话，挖掘用户的闪光点和潜能
 
@@ -253,18 +201,18 @@ def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
     - 追求高召回率，不追求高精确度（精确度由用户确认环节保证）
     - 充分挖掘用户的特质和潜能，不只关注职业
     - L1 是泥沙层，可以碎片化，保留细节
-    - 增量去重：使用 profileLoaderNode 预加载的 L1 摘要（避免重复查库）
+    - 增量去重：使用 profile_loader_node 预加载的 L1 摘要（避免重复查库）
 
     Args:
         state: 包含 messages 和 l1_observations_summary 的当前对话状态
         config: LangGraph 运行配置，包含 username
 
     Returns:
-        chatState: 更新后的状态，包含 last_turn_analysis
+        ChatAndProfileState: 更新后的状态，包含 last_turn_analysis
     """
     print("--- 进入 Profiler 节点 ---")
 
-    # 1. 从 state 获取缓存的最新用户消息（由 chatNode 缓存）
+    # 1. 从 state 获取缓存的最新用户消息（由 chat_node 缓存）
     latest_user_message = state.get("last_user_message")
 
     if not latest_user_message:
@@ -279,7 +227,7 @@ def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
     user = get_or_create_user(username)
     user_id = user.id
 
-    # 4. 从 state 读取 L1 观察摘要（profileLoaderNode 已加载，避免重复查库）
+    # 4. 从 state 读取 L1 观察摘要（profile_loader_node 已加载，避免重复查库）
     existing_summary = state.get("l1_observations_summary", "")
     has_existing_info = bool(existing_summary) and existing_summary != EMPTY_USER_PROFILE_SNAPSHOT
 
@@ -307,7 +255,7 @@ def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
         structured_llm = llm.with_structured_output(ProfilerOutput)
 
         # 构建消息列表：System Prompt（含已有信息） + 缓存的最新用户消息
-        # 使用 chatNode 缓存的用户消息，而不是 messages[-1]（后者可能是 AI 回复）
+        # 使用 chat_node 缓存的用户消息，而不是 messages[-1]（后者可能是 AI 回复）
         lc_messages = [SystemMessage(content=system_prompt), latest_user_message]
 
         # 调试：打印最新用户消息
@@ -392,7 +340,7 @@ def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
 
         print(f"[Profiler Debug] 是否达到整理阈值: {is_ready_to_refine} (当前: {new_session_count}, 阈值: 10)")
 
-        # 8. 返回分析结果到 state（给 Router 看的决策依据）
+        # 8. 返回分析结果到 state（给 router 看的决策依据）
         return {
             "last_turn_analysis": {
                 "has_new_info": total_saved > 0,  # 是否有新信息
@@ -409,7 +357,7 @@ def profilerNode(state: chatState, config: RunnableConfig) -> chatState:
         return {"last_turn_analysis": None}
 
 
-def chatRouter(state: chatState) -> str:
+def chat_router(state: ChatAndProfileState) -> str:
     """
     聊天路由节点：决定继续聊天还是进入整理阶段
 
@@ -436,5 +384,3 @@ def chatRouter(state: chatState) -> str:
 
     print(f"[Router] 继续聊天（未达到整理阈值）")
     return "continue_chat"
-
-

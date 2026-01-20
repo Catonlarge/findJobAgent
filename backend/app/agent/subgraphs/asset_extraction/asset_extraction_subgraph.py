@@ -1,110 +1,164 @@
 """
-资产提取子图
+资产提取模块父图 (Asset Extraction Parent Graph)
 
-该子图封装了隐性资产提取的完整流程：
-1. 提取器节点分析用户消息
-2. 路由决策判断是否有待确认的提案
-3. 用户确认后保存，或拒绝后丢弃
+该模块提供两个子图的编排和路由：
+1. Chat & Profile: 与用户对话，隐式提取职业信息
+2. Proposal & Refine: 生成资产提案，用户确认后保存
 
-此子图可以在主图中作为一个整体节点使用。
+架构说明：
 
-这个子图也有自己的结构：
+    asset_extraction_subgraph (父图)
+    │
+    ├── chat_and_profile 子图
+    │   └── profiler_node (结束) -> 父图 router
+    │
+    ├── proposal_and_refine 子图
+    │   └── (结束或返回) -> 父图 router
+    │
+    └── asset_extraction_router (父图路由)
+        ├── continue_chat: chat_and_profile
+        ├── enter_refinement: proposal_and_refine
+        └── end: END
 
-graph TD
-    subgraph Main Loop [Main 函数循环]
-        INPUT[用户输入]
-        PRINT[实时打印 ChatBot 回复]
-    end
+使用示例:
+    from app.agent.subgraphs.asset_extraction import (
+        create_asset_extraction_subgraph,
+        AssetExtractionState,
+    )
 
-    subgraph SuperGraph [主图逻辑]
-        START((Start)) --> CHAT[ChatBot 子图]
-        
-        CHAT --> PROFILER[Profiler 节点]
-        
-        PROFILER --> ROUTER{路由节点}
-        
-        ROUTER --> |没什么事| END((END))
-        ROUTER --> |去整理| EDITOR[Editor 子图]
-        
-        EDITOR --> END
-    end
-
-    %% 关键的数据流向
-    INPUT ==> START
-    CHAT -.-> |一边生成一边吐字| PRINT
-    END ==> INPUT
-
+    # 在主图中添加
+    workflow.add_node("asset_extraction", create_asset_extraction_subgraph())
 """
 
-from langgraph.graph import StateGraph, END
-from app.agent.state import AgentState
-# TODO: 待完善子图构建逻辑
-# from app.agent.subgraphs.asset_extraction.nodes import (
-#     profileLoaderNode,
-#     chatNode,
-#     profilerNode,
-#     chatRouter
-# )
-from app.agent.sharednodes.db_ops import save_asset_node, discard_asset_node
+from typing import TypedDict, Annotated, List
+from langgraph.graph import StateGraph, END, add_messages
+from langchain_core.messages import BaseMessage
+
+from app.agent.subgraphs.asset_extraction.chat_and_profile import create_chat_and_profile_subgraph
+from app.agent.subgraphs.asset_extraction.proposal_and_refine import create_proposal_and_refine_subgraph
 
 
+# =============================================================================
+# 联合状态定义 (Union State)
+# =============================================================================
 
-
-
-
-
-
-
-
-'''
-def create_asset_extraction_subgraph() -> StateGraph:
+class AssetExtractionState(TypedDict, total=False):
     """
-    创建资产提取子图
+    资产提取模块的联合状态
 
-    工作流:
-        extractor_node -> router_decision_function (条件边)
-            -> save_asset_node -> END
-            -> discard_asset_node -> END
-            -> extractor_node (循环: 继续调整)
-            -> pruner_node (传递到主图的剪枝节点)
+    这是 chat_and_profile 和 proposal_and_refine 两个子图的共享状态。
+    主图使用此状态来确保两个子图之间的数据流转。
+    """
+
+    # --- 来自 ChatAndProfileState ---
+    messages: Annotated[List[BaseMessage], add_messages]
+    l1_observations_summary: str
+    last_turn_analysis: dict
+    session_new_observation_count: int
+    last_user_message: BaseMessage
+
+    # --- 来自 ProposalAndRefineState ---
+    pending_proposals: List[dict]
+    user_feedback: dict
+    current_stage: str
+    saved_assets: List[dict]
+
+
+# =============================================================================
+# 导出子图创建函数
+# =============================================================================
+
+__all__ = [
+    # 父图创建函数
+    "create_asset_extraction_subgraph",
+    # 子图创建函数（保留向后兼容）
+    "create_chat_and_profile_subgraph",
+    "create_proposal_and_refine_subgraph",
+    # 联合状态
+    "AssetExtractionState",
+]
+
+
+# =============================================================================
+# 父图路由逻辑
+# =============================================================================
+
+def asset_extraction_router(state: AssetExtractionState) -> str:
+    """
+    资产提取父图的路由函数
+
+    根据子图执行后的状态，决定下一步流向：
+    - 继续聊天 (chat_and_profile)
+    - 进入整理阶段 (proposal_and_refine)
+    - 结束 (END)
+
+    Args:
+        state: 包含 last_turn_analysis 的当前状态
 
     Returns:
-        编译后的子图实例
+        str: "continue_chat" | "enter_refinement" | "end"
     """
-    # 创建子图
-    workflow = StateGraph(AgentState)
+    analysis = state.get("last_turn_analysis")
 
-    # 添加节点
-    workflow.add_node("extractor_node", extractor_node)
-    workflow.add_node("save_asset_node", save_asset_node)
-    workflow.add_node("discard_asset_node", discard_asset_node)
+    if not analysis:
+        print("[AssetExtractionRouter] last_turn_analysis 为空，继续聊天")
+        return "continue_chat"
 
-    # 设置入口点
-    workflow.set_entry_point("extractor_node")
+    is_ready = analysis.get("is_ready_to_refine", False)
 
-    # 添加条件边：extractor -> router
+    if is_ready:
+        print(f"[AssetExtractionRouter] 触发整理阶段（原因：累积信息 >= 10 条）")
+        return "enter_refinement"
+
+    print(f"[AssetExtractionRouter] 继续聊天（未达到整理阈值）")
+    return "continue_chat"
+
+
+# =============================================================================
+# 父图创建函数
+# =============================================================================
+
+def create_asset_extraction_subgraph() -> StateGraph:
+    """
+    创建资产提取父图
+
+    该父图编排两个子图的执行流程：
+    1. 默认进入 chat_and_profile 子图
+    2. chat_and_profile 结束后，根据 router 决定：
+       - continue_chat: 重新进入 chat_and_profile
+       - enter_refinement: 进入 proposal_and_refine
+    3. proposal_and_refine 结束后，根据其返回状态决定下一步
+
+    Returns:
+        编译后的父图实例
+    """
+    # 创建父图
+    workflow = StateGraph(AssetExtractionState)
+
+    # 编译子图
+    chat_subgraph = create_chat_and_profile_subgraph()
+    proposal_subgraph = create_proposal_and_refine_subgraph()
+
+    # 添加子图节点
+    workflow.add_node("chat_and_profile", chat_subgraph)
+    workflow.add_node("proposal_and_refine", proposal_subgraph)
+
+    # 设置入口点：默认从 chat_and_profile 开始
+    workflow.set_entry_point("chat_and_profile")
+
+    # 添加条件边：chat_and_profile 结束后的路由
     workflow.add_conditional_edges(
-        "extractor_node",
-        router_decision_function,
+        "chat_and_profile",
+        asset_extraction_router,
         {
-            "save_asset_node": "save_asset_node",
-            "discard_asset_node": "discard_asset_node",
-            "extractor_node": "extractor_node",
-            # 这些路由需要传递给主图
-            "pruner_node": END,
-            "onboarding_node": END,
+            "continue_chat": "chat_and_profile",  # 继续聊天
+            "enter_refinement": "proposal_and_refine",  # 进入整理阶段
         }
     )
 
-    # 添加边：save/discard -> END
-    workflow.add_edge("save_asset_node", END)
-    workflow.add_edge("discard_asset_node", END)
+    # 添加边：proposal_and_refine 结束后到父图 END
+    # TODO: 将来可能需要根据 proposal_and_refine 的返回状态决定是否回到 chat
+    workflow.add_edge("proposal_and_refine", END)
 
-    # 编译子图
+    # 编译父图
     return workflow.compile()
-
-
-# 创建全局子图实例（可选）
-asset_extraction_subgraph = create_asset_extraction_subgraph()
-
-'''
