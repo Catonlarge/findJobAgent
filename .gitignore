@@ -52,3 +52,6 @@ htmlcov/
 .env.local
 .env.*
 ! .env.example
+
+# Manual test scripts (not to be committed)
+manual_tests/

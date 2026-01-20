@@ -3,7 +3,8 @@ LangGraph Agent 状态定义和 ScoredEvaluation 模式
 为智能求职助手定义核心状态结构和 LLM 结构化输出模式
 """
 
-from typing import List, Dict, Any, Optional, TypedDict
+import operator
+from typing import Annotated, List, Dict, Any, Optional, TypedDict
 from pydantic import BaseModel, Field
 
 from app.models import ChatIntent
@@ -52,7 +53,7 @@ class AgentState(TypedDict, total=False):
     """
 
     # 消息历史 - 对话的完整记录
-    messages: List[Dict[str, Any]]
+    messages: Annotated[List[Dict[str, Any]], operator.add]
 
     # 剪枝后的上下文字符串 - 包含与当前意图相关的关键信息
     pruned_context_str: str

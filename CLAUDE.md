@@ -1,7 +1,13 @@
 # CLAUDE.md - FindJobAgent (V7.1 Architecture)
 
 ## Context and docs
-- Before coding, head to the `D:\programming_enviroment\findJobAgent\docs\` path to check the req docs, tech stack, project directory, and database design.
+- **AI Navigation Guide**: First read `docs/DOCS_INDEX.md` for a complete guide to all project documentation.
+- **Detailed Docs**: Head to the `D:\programming_enviroment\findJobAgent\docs\` path to check:
+  - `docs/requirementAndFinalPlan.md` - Product requirements and business value
+  - `docs/techStackAndContentTable.md` - Tech stack (Mantine UI only, NO Tailwind/Axios/Poetry)
+  - `docs/dataBaseDesign.md` - 7-table database architecture
+  - `docs/devPlan.md` - 18-20 day development roadmap
+  - `docs/detailedDevPlan/` - Detailed task specifications (T2-01, T2-01.2, T2-02, etc.)
 
 ## Commands
 - **Backend (Python - Windows)**:

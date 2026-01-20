@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = "."
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disable_error_code = ["annotation-unchecked"]
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "langgraph.*",
+    "google.*",
+]
+ignore_missing_imports = true

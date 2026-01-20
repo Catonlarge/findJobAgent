@@ -19,15 +19,31 @@ class AssetProposal(BaseModel):
     用途：
     - 连接 LLM 输出与 State 暂存区
     - 确保提取的信息符合数据库字段约束
+    - 通过 is_empty 字段可以表示空提案（无资产检测）
+
+    设计说明：
+    - 当 is_empty=True 时，表示未检测到有价值信息
+    - 当 is_empty=False 时，其他字段才有意义
     """
+    is_empty: bool = Field(
+        default=False,
+        description="是否为空提案：True 表示未检测到有价值的职业信息，False 表示成功提取资产"
+    )
     section_key: ProfileSectionKey = Field(
-        description="必须从指定的枚举值 (skills, work_experience, project_details, behavioral_traits, career_potential) 中选择最匹配的一项"
+        default="career_potential",
+        description="必须从指定的枚举值 (skills, work_experience, project_details, behavioral_traits, career_potential) 中选择最匹配的一项。仅在 is_empty=False 时有效"
     )
     refined_content: str = Field(
-        description="转化后的内容：第一人称，保留个性细节，去除口语废话。例如：'我掌握 Python 和 FastAPI，曾用它们构建过 RESTful API'"
+        default="",
+        description="转化后的内容：第一人称，保留个性细节，去除口语废话。例如：'我掌握 Python 和 FastAPI，曾用它们构建过 RESTful API'。仅在 is_empty=False 时有效"
     )
     thought: str = Field(
-        description="[调试用] 推理过程：解释为什么提取这段话，保留了哪些细节。例如：'用户明确提到技术栈，属于硬技能'"
+        default="",
+        description="[调试用] 推理过程：解释为什么提取这段话，保留了哪些细节。例如：'用户明确提到技术栈，属于硬技能'。仅在 is_empty=False 时有效"
+    )
+    chatMessage: str = Field(
+        default="",
+        description="给用户对话内容 了解了上一段对话之后，继续跟用户的对话内容"
     )
 
 

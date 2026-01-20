@@ -6,6 +6,7 @@
 # 用户域模型
 from .user import User
 from .profile import ProfileSection, ProfileSectionKey
+from .observation import RawObservation, ObservationStatus, ObservationCategory
 from .document import Document, DocumentType
 
 # 会话域模型
@@ -24,6 +25,7 @@ __all__ = [
     # 用户域
     "User",
     "ProfileSection", "ProfileSectionKey",
+    "RawObservation", "ObservationStatus", "ObservationCategory",
     "Document", "DocumentType",
     # 会话域
     "ChatSession", "ChatIntent",

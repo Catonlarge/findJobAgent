@@ -11,6 +11,7 @@ from sqlmodel import SQLModel, Session, create_engine, select
 
 from app.models.user import User
 from app.models.profile import ProfileSection, ProfileSectionKey
+from app.models.observation import RawObservation, ObservationStatus, ObservationCategory
 from app.models.document import Document, DocumentType
 from app.models.chat import ChatSession, ChatIntent
 from app.models.message import ChatMessage, MessageRole

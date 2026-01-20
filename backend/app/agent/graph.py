@@ -1,16 +1,15 @@
 """
-LangGraph 工作流定义 (T2-01.2)
+LangGraph 主工作流定义 (T2-01.2)
 
-该模块定义了智能求职助手的核心工作流，包括隐性资产提取、
-意图路由、上下文剪枝等节点及其连接关系。
+该模块定义了智能求职助手的核心工作流，包括子图编排和节点连接。
 """
 
 from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
-from app.agent.nodes.extractor import extractor_node
-from app.agent.nodes.router import router_decision_function
-from app.agent.nodes.db_ops import save_asset_node, discard_asset_node
-from app.agent.nodes.pruner import pruner_node
+from app.agent.subgraphs.asset_extraction.extractor import extractor_node
+from app.agent.sharednodes.router import router_decision_function
+from app.agent.sharednodes.db_ops import save_asset_node, discard_asset_node
+from app.agent.sharednodes.pruner import pruner_node
 
 
 def create_agent_graph() -> StateGraph:

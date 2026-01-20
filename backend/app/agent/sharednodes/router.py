@@ -30,9 +30,9 @@ def router_decision_function(state: RouterNodeInput) -> str:
 
     路由规则：
     - pending_proposal 存在时：
-      - 用户输入 "1" -> save_asset_node
-      - 用户输入 "0" -> discard_asset_node
-      - 用户输入其他 -> extractor_node (视为放弃当前提案，继续提取)
+      - 用户输入 "1" -> save_asset_node（确认保存）
+      - 用户输入 "0" -> discard_asset_node（拒绝提案）
+      - 用户输入其他 -> extractor_node（连续上下文：视为调整反馈，继续调整提案）
     - pending_proposal 为空时：
       - resume_refine -> pruner_node
       - interview_prep -> pruner_node
@@ -60,7 +60,8 @@ def router_decision_function(state: RouterNodeInput) -> str:
                     return "save_asset_node"
                 elif user_input == "0":
                     return "discard_asset_node"
-                # 用户没按 1/0，视为放弃当前提案，继续提取
+                # 用户输入其他内容：连续上下文模式，视为调整反馈
+                # 进入 extractor_node 进行调整
                 return "extractor_node"
 
     # [逻辑分支 2] 正常意图路由

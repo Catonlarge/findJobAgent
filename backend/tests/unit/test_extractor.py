@@ -100,6 +100,74 @@ class TestExtractorNode:
         assert "AI 框架" in result["pending_proposal"]["refined_content"]
 
     @patch('app.agent.nodes.extractor.get_llm')
+    def test_refinement_mode_with_pending_proposal(self, mock_get_llm):
+        """测试：调整模式 - 当 pending_proposal 存在时，使用调整 prompt"""
+        mock_llm = Mock()
+        mock_structured = Mock()
+        mock_structured.invoke.return_value = AssetProposal(
+            section_key=ProfileSectionKey.SKILLS,
+            refined_content="掌握 Python",
+            thought="根据用户反馈简化了表述"
+        )
+        mock_llm.with_structured_output.return_value = mock_structured
+        mock_get_llm.return_value = mock_llm
+
+        state = {
+            "messages": [
+                {"role": "user", "content": "太啰嗦了"}
+            ],
+            "user_id": 1,
+            "pending_proposal": {
+                "section_key": "skills",
+                "refined_content": "我精通 Python 编程语言，并且有丰富的开发经验",
+                "thought": "用户提到技术栈"
+            }
+        }
+
+        result = extractor_node(state)
+
+        # 验证提案调整
+        assert result["pending_proposal"] is not None
+        assert result["pending_proposal"]["refined_content"] == "掌握 Python"
+
+        # 验证使用了调整模板
+        assert len(result["messages"]) == 2
+        assert "已调整提案" in result["messages"][1]["content"]
+
+        # 验证 LLM 被正确调用（应该使用调整 prompt）
+        mock_structured.invoke.assert_called_once()
+        call_args = mock_structured.invoke.call_args
+        prompt = call_args[0][0]
+        assert "之前的提案" in prompt
+        assert "用户的反馈" in prompt
+
+    @patch('app.agent.nodes.extractor.get_llm')
+    def test_refinement_mode_user_abandon(self, mock_get_llm):
+        """测试：调整模式 - 用户要求放弃提案"""
+        mock_llm = Mock()
+        mock_structured = Mock()
+        mock_structured.invoke.return_value = EmptyProposal(is_empty=True)
+        mock_llm.with_structured_output.return_value = mock_structured
+        mock_get_llm.return_value = mock_llm
+
+        state = {
+            "messages": [
+                {"role": "user", "content": "不要了，算了"}
+            ],
+            "user_id": 1,
+            "pending_proposal": {
+                "section_key": "skills",
+                "refined_content": "我精通 Python",
+                "thought": "用户提到技术栈"
+            }
+        }
+
+        result = extractor_node(state)
+
+        # 验证提案被清空
+        assert result["pending_proposal"] is None
+
+    @patch('app.agent.nodes.extractor.get_llm')
     def test_empty_proposal_when_no_asset_detected(self, mock_get_llm):
         """测试：无资产时返回空提案"""
         mock_llm = Mock()
@@ -172,10 +240,10 @@ class TestRouterDecision:
         assert result == "discard_asset_node"
 
     def test_pending_proposal_other_input_routes_to_extractor(self):
-        """测试：pending_proposal 存在时，输入其他内容路由回 extractor"""
+        """测试：pending_proposal 存在时，输入其他内容路由到 extractor（连续上下文模式）"""
         state = {
             "messages": [
-                {"role": "user", "content": "继续聊天"}
+                {"role": "user", "content": "太啰嗦了，简洁点"}
             ],
             "pending_proposal": {
                 "section_key": "skills",
@@ -183,6 +251,23 @@ class TestRouterDecision:
             }
         }
         result = router_decision_function(state)
+        # 应该路由到 extractor_node 进行调整
+        assert result == "extractor_node"
+
+    def test_pending_proposal_refinement_scenario(self):
+        """测试：连续上下文场景 - 用户反馈应该路由到调整模式"""
+        # 场景：用户输入"太啰嗦了"，应该进入调整模式而不是放弃
+        state = {
+            "messages": [
+                {"role": "user", "content": "太啰嗦了"}
+            ],
+            "pending_proposal": {
+                "section_key": "skills",
+                "refined_content": "我精通 Python 编程语言"
+            }
+        }
+        result = router_decision_function(state)
+        # 连续上下文：任何非 1/0 的输入都视为调整反馈
         assert result == "extractor_node"
 
     def test_no_proposal_routes_to_extractor(self):
