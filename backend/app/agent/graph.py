@@ -6,7 +6,7 @@ LangGraph 主工作流定义 (T2-01.2)
 
 from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
-from app.agent.subgraphs.asset_extraction.extractor import extractor_node
+from app.agent.subgraphs.asset_extraction.nodes import extractor_node
 from app.agent.sharednodes.router import router_decision_function
 from app.agent.sharednodes.db_ops import save_asset_node, discard_asset_node
 from app.agent.sharednodes.pruner import pruner_node

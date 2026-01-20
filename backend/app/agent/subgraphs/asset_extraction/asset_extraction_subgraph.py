@@ -38,8 +38,13 @@ graph TD
 
 from langgraph.graph import StateGraph, END
 from app.agent.state import AgentState
-from app.agent.subgraphs.asset_extraction.extractor import extractor_node
-from app.agent.sharednodes.router import router_decision_function
+# TODO: 待完善子图构建逻辑
+# from app.agent.subgraphs.asset_extraction.nodes import (
+#     profileLoaderNode,
+#     chatNode,
+#     profilerNode,
+#     chatRouter
+# )
 from app.agent.sharednodes.db_ops import save_asset_node, discard_asset_node
 
 

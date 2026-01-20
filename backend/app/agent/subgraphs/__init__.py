@@ -8,8 +8,10 @@
     subgraphs/
     ├── asset_extraction/         # 资产提取子图（目录模式，包含专属节点）
     │   ├── __init__.py
-    │   ├── asset_extraction.py   # 子图定义
-    │   └── extractor.py          # 专属提取器节点
+    │   ├── asset_extraction_subgraph.py   # 子图定义
+    │   ├── extractor.py          # 专属提取器节点
+    │   ├── prompts.py            # 提示词模板
+    │   └── utils.py              # 工具函数
     ├── resume_refine.py          # 简历优化子图（单文件模式）
     └── interview_prep.py         # 面试准备子图（单文件模式）
 
@@ -25,10 +27,11 @@
     workflow.add_node("asset_extraction", asset_subgraph)
 """
 
-from app.agent.subgraphs.asset_extraction import (
-    create_asset_extraction_subgraph,
-    asset_extraction_subgraph,
-)
+# TODO: 待实现 asset_extraction 子图
+# from app.agent.subgraphs.asset_extraction import (
+#     create_asset_extraction_subgraph,
+#     asset_extraction_subgraph,
+# )
 from app.agent.subgraphs.resume_refine import (
     create_resume_refine_subgraph,
     resume_refine_subgraph,
@@ -39,8 +42,8 @@ from app.agent.subgraphs.interview_prep import (
 )
 
 __all__ = [
-    "create_asset_extraction_subgraph",
-    "asset_extraction_subgraph",
+    # "create_asset_extraction_subgraph",
+    # "asset_extraction_subgraph",
     "create_resume_refine_subgraph",
     "resume_refine_subgraph",
     "create_interview_prep_subgraph",

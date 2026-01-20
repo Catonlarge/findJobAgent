@@ -35,10 +35,11 @@ class RawObservation(TimestampModel, table=True):
 
     user_id: int = Field(foreign_key="users.id", index=True, nullable=False)
 
-    # 血缘追踪：指向具体的哪一条聊天记录
-    source_message_id: Optional[int] = Field(
+    # 血缘追踪：指向具体的哪一条聊天记录 (使用 UUID 而非自增 ID)
+    # 原因：Profiler 运行时消息可能尚未存入数据库，无法获取自增 ID
+    # 解决：使用 LangChain Message 对象的 .id 属性（UUID 字符串）作为关联
+    source_msg_uuid: Optional[str] = Field(
         default=None,
-        foreign_key="chat_messages.id",
         index=True
     )
 

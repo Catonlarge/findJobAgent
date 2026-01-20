@@ -13,9 +13,9 @@ from unittest.mock import Mock, patch, MagicMock
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from app.agent.nodes.extractor import extractor_node
-from app.agent.nodes.db_ops import save_asset_node, discard_asset_node
-from app.agent.nodes.router import router_decision_function
+from app.agent.subgraphs.asset_extraction.nodes import extractor_node
+from app.agent.sharednodes.db_ops import save_asset_node, discard_asset_node
+from app.agent.sharednodes.router import router_decision_function
 from app.agent.models import AssetProposal, EmptyProposal
 from app.models.profile import ProfileSectionKey
 from app.models.chat import ChatIntent
@@ -40,7 +40,7 @@ class TestExtractorNode:
         result = extractor_node(state)
         assert result["pending_proposal"] is None
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_skill_extraction_generates_proposal(self, mock_get_llm):
         """测试：提取技能生成提案"""
         # Mock LLM 返回结构化输出
@@ -72,7 +72,7 @@ class TestExtractorNode:
         assert len(result["messages"]) == 2
         assert "存入档案" in result["messages"][1]["content"]
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_career_potential_extraction(self, mock_get_llm):
         """测试：提取职业潜能生成提案 (T2-01.2 新增枚举值)"""
         mock_llm = Mock()
@@ -99,7 +99,7 @@ class TestExtractorNode:
         assert result["pending_proposal"]["section_key"] == "career_potential"
         assert "AI 框架" in result["pending_proposal"]["refined_content"]
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_refinement_mode_with_pending_proposal(self, mock_get_llm):
         """测试：调整模式 - 当 pending_proposal 存在时，使用调整 prompt"""
         mock_llm = Mock()
@@ -141,7 +141,7 @@ class TestExtractorNode:
         assert "之前的提案" in prompt
         assert "用户的反馈" in prompt
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_refinement_mode_user_abandon(self, mock_get_llm):
         """测试：调整模式 - 用户要求放弃提案"""
         mock_llm = Mock()
@@ -167,7 +167,7 @@ class TestExtractorNode:
         # 验证提案被清空
         assert result["pending_proposal"] is None
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_empty_proposal_when_no_asset_detected(self, mock_get_llm):
         """测试：无资产时返回空提案"""
         mock_llm = Mock()
@@ -188,7 +188,7 @@ class TestExtractorNode:
         # 验证无提案
         assert result["pending_proposal"] is None
 
-    @patch('app.agent.nodes.extractor.get_llm')
+    @patch('app.agent.subgraphs.asset_extraction.nodes.get_llm')
     def test_llm_error_returns_no_proposal(self, mock_get_llm):
         """测试：LLM 调用失败时不阻断流程"""
         mock_llm = Mock()
@@ -309,8 +309,8 @@ class TestRouterDecision:
 class TestSaveAssetNode:
     """测试保存资产节点"""
 
-    @patch('app.agent.nodes.db_ops.get_engine')
-    @patch('app.agent.nodes.db_ops.ProfileRepository')
+    @patch('app.agent.sharednodes.db_ops.get_engine')
+    @patch('app.agent.sharednodes.db_ops.ProfileRepository')
     def test_save_asset_to_database(self, mock_repo_class, mock_get_engine):
         """测试：资产保存到数据库"""
         # Mock session and repository
