@@ -32,6 +32,16 @@ class ChatMessage(TimestampModel, table=True):
     # 主键
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # 业务主键：LangChain Message UUID
+    # 作用：异步关联键，Profiler 在消息存入数据库前即可通过此 UUID 关联
+    # 优势：解耦 Profiler 执行时机与数据库写入时机
+    msg_uuid: Optional[str] = Field(
+        default=None,
+        unique=True,
+        index=True,
+        description="LangChain Message UUID for async lineage tracking"
+    )
+
     # 外键：会话ID，查询热点（加载当前会话的所有消息）
     # 索引优化：按会话查询消息时的性能
     session_id: int = Field(foreign_key="chat_sessions.id", index=True, nullable=False)

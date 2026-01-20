@@ -133,11 +133,12 @@ def create_default_chat_session(session: Session, user_id: int) -> ChatSession:
         print(f"Chat session already exists (ID: {result.id}, thread_id: {result.thread_id})")
         return result
 
-    # 创建第一个会话
+    # 创建第一个会话（生成 session_uuid）
     import uuid
     default_session = ChatSession(
         user_id=user_id,
-        thread_id=str(uuid.uuid4()),
+        session_uuid=str(uuid.uuid4()),  # V7.2: 前端会话 UUID
+        thread_id=str(uuid.uuid4()),     # LangGraph Checkpoint ID
         intent=ChatIntent.ONBOARDING,
         title="欢迎使用智能职业顾问",
         context_data={"initialized": True}

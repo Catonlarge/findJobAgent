@@ -27,6 +27,16 @@ class ChatSession(TimestampModel, table=True):
     # 主键
     id: Optional[int] = Field(default=None, primary_key=True)
 
+    # 业务主键：前端会话 UUID
+    # 作用：对外暴露的会话 ID（URL 参数），安全且灵活
+    # 优势：避免暴露自增 ID，支持前端路由（如 /chat/{session_uuid}）
+    session_uuid: Optional[str] = Field(
+        default=None,
+        unique=True,
+        index=True,
+        description="Frontend-exposed session ID (URL-safe UUID)"
+    )
+
     # 外键：归属用户，左侧栏会话列表查询
     # 索引优化：按用户查询会话列表时的性能
     user_id: int = Field(foreign_key="users.id", index=True, nullable=False)

@@ -45,4 +45,14 @@ class ProfileSection(TimestampModel, table=True):
 
     # 切片内容，JSON 格式，直接存储该切片的所有数据
     # 灵活存储结构化的职业数据，无需为每个字段创建列
+    # 规范：content 内部键名应包含 source_l1_ids（证据链）
     content: Dict[str, Any] = Field(sa_column=Column(JSON))
+
+    # 标签列：技能、角色等关键词（用于快速查询和筛选）
+    # 示例：["Python", "Backend", "FastAPI"]
+    # 优势：独立存储便于构建"技能云"或标签筛选功能
+    tags: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="Skill/role tags for filtering and search"
+    )
