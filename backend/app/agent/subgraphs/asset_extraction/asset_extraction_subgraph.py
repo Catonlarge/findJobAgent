@@ -118,7 +118,7 @@ def asset_extraction_router(state: AssetExtractionState) -> str:
 # 父图创建函数
 # =============================================================================
 
-def create_asset_extraction_subgraph() -> StateGraph:
+def create_asset_extraction_subgraph(checkpointer=None):
     """
     创建资产提取父图
 
@@ -128,6 +128,9 @@ def create_asset_extraction_subgraph() -> StateGraph:
        - continue_chat: 重新进入 chat_and_profile
        - enter_refinement: 进入 proposal_and_refine
     3. proposal_and_refine 结束后，根据其返回状态决定下一步
+
+    Args:
+        checkpointer: LangGraph checkpointer（可选，用于持久化状态）
 
     Returns:
         编译后的父图实例
@@ -160,5 +163,5 @@ def create_asset_extraction_subgraph() -> StateGraph:
     # TODO: 将来可能需要根据 proposal_and_refine 的返回状态决定是否回到 chat
     workflow.add_edge("proposal_and_refine", END)
 
-    # 编译父图
-    return workflow.compile()
+    # 编译父图（带 checkpointer，如果提供）
+    return workflow.compile(checkpointer=checkpointer)

@@ -31,26 +31,38 @@ class SessionRepository:
     def create_session(
         self,
         user_id: int,
-        thread_id: str,
         intent: ChatIntent,
         title: str,
-        context_data: Optional[Dict[str, Any]] = None
+        context_data: Optional[Dict[str, Any]] = None,
+        session_uuid: Optional[str] = None
     ) -> ChatSession:
         """
         创建新会话
 
+        注意：thread_id 在实践中等于 session_uuid
+
         Args:
             user_id: 用户 ID
-            thread_id: LangGraph Checkpoint ID
             intent: 会话意图枚举
             title: 会话标题
             context_data: 环境配置（可选）
+            session_uuid: 前端会话 UUID（可选，不传则自动生成）
 
         Returns:
             创建的 ChatSession 对象
         """
+        import uuid
+
+        # 生成 session_uuid（如果没有提供）
+        if session_uuid is None:
+            session_uuid = str(uuid.uuid4())
+
+        # thread_id 直接等于 session_uuid
+        thread_id = session_uuid
+
         session = ChatSession(
             user_id=user_id,
+            session_uuid=session_uuid,
             thread_id=thread_id,
             intent=intent,
             title=title,
@@ -289,3 +301,57 @@ class SessionRepository:
         for message in messages:
             self.session.delete(message)
         return count
+
+    def ensure_session_exists(
+        self,
+        user_id: int,
+        session_uuid: str,
+        intent: ChatIntent = ChatIntent.ONBOARDING,
+        title: str = "新对话"
+    ) -> ChatSession:
+        """
+        确保 Session 存在（懒加载创建逻辑）
+
+        这是 ChatService 初始化的核心方法，实现"会话容器保证"功能：
+        在存储任何消息之前，先确保会话容器存在
+
+        注意：thread_id 在实践中等于 session_uuid
+
+        Args:
+            user_id: 用户 ID
+            session_uuid: 前端会话 UUID（也是 LangGraph thread_id）
+            intent: 会话意图（默认 ONBOARDING）
+            title: 会话标题（默认 "新对话"）
+
+        Returns:
+            ChatSession 对象（已存在的或新创建的）
+        """
+        # 1. 先检查是否已存在（根据 thread_id = session_uuid）
+        existing = self.get_session_by_thread_id(session_uuid)
+        if existing:
+            return existing
+
+        # 2. 不存在，创建新会话
+        print(f"[SessionRepository] 检测到新会话，正在初始化 Session (session_uuid: {session_uuid})")
+        session = self.create_session(
+            user_id=user_id,
+            intent=intent,
+            title=title,
+            context_data={"initialized": True},
+            session_uuid=session_uuid  # thread_id 会自动等于 session_uuid
+        )
+        print(f"[SessionRepository] 新会话创建成功 (ID: {session.id}, thread_id: {session.thread_id})")
+        return session
+
+    def get_session_by_session_uuid(self, session_uuid: str) -> Optional[ChatSession]:
+        """
+        根据 session_uuid 获取会话（用于前端路由）
+
+        Args:
+            session_uuid: 前端会话 UUID
+
+        Returns:
+            ChatSession 对象，不存在则返回 None
+        """
+        statement = select(ChatSession).where(ChatSession.session_uuid == session_uuid)
+        return self.session.exec(statement).first()

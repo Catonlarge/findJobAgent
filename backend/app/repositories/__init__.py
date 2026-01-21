@@ -6,9 +6,11 @@ Repository (DAO) 模块
 from .profile_repository import ProfileRepository
 from .session_repository import SessionRepository
 from .artifact_repository import ArtifactRepository
+from .user_repository import UserRepository
 
 __all__ = [
     "ProfileRepository",
     "SessionRepository",
-    "ArtifactRepository"
+    "ArtifactRepository",
+    "UserRepository"
 ]

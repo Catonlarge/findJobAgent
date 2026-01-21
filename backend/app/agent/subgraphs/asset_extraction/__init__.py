@@ -47,10 +47,13 @@
 from app.agent.subgraphs.asset_extraction.asset_extraction_subgraph import (
     create_chat_and_profile_subgraph,
     create_proposal_and_refine_subgraph,
+    create_asset_extraction_subgraph,
     AssetExtractionState,
 )
 
 __all__ = [
+    # 父图创建函数
+    "create_asset_extraction_subgraph",
     # 子图创建函数
     "create_chat_and_profile_subgraph",
     "create_proposal_and_refine_subgraph",
