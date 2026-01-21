@@ -39,7 +39,7 @@
     # 单独导入 Proposal & Refine 子图
     from app.agent.subgraphs.asset_extraction.proposal_and_refine import (
         create_proposal_and_refine_subgraph,
-        ProposalAndRefineState,
+        EditorState,
     )
 """
 
