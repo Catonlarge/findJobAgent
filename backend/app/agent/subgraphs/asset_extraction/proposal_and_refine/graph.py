@@ -61,7 +61,8 @@ def create_proposal_and_refine_subgraph() -> StateGraph:
     4. 直到 active_index >= len(current_drafts) 结束
 
     Returns:
-        编译后的子图实例，配置了 interrupt_before['human_node']
+        编译后的子图实例，配置了 interrupt_after['human_node']
+        (human_node 执行完后中断，用户能看到草稿)
     """
     # 创建子图
     workflow = StateGraph(EditorState)
@@ -113,7 +114,8 @@ def create_proposal_and_refine_subgraph() -> StateGraph:
     )
 
     # 编译子图，配置 human_node 为中断点
-    compiled_graph = workflow.compile(interrupt_before=["human_node"])
+    # interrupt_after: human_node 执行完后才中断，这样用户能看到草稿
+    compiled_graph = workflow.compile(interrupt_after=["human_node"])
     return compiled_graph
 
 

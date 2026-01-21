@@ -31,8 +31,8 @@
 """
 
 from typing import TypedDict, Annotated, List
-from langgraph.graph import StateGraph, END, add_messages
-from langchain_core.messages import BaseMessage
+from langgraph.graph import StateGraph, END, START, add_messages
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from app.agent.subgraphs.asset_extraction.chat_and_profile import create_chat_and_profile_subgraph
 from app.agent.subgraphs.asset_extraction.proposal_and_refine import create_proposal_and_refine_subgraph
@@ -83,6 +83,47 @@ __all__ = [
 # 父图路由逻辑
 # =============================================================================
 
+def entry_point_router(state: AssetExtractionState) -> str:
+    """
+    父图入口点路由函数
+
+    在每次用户输入时首先执行，检查用户是否请求直接进入编辑器。
+
+    路由逻辑：
+    - 用户输入包含 "edit"/"editor"/"整理档案" → proposal_and_refine (直接进入编辑器)
+    - 其他 → chat_and_profile (正常聊天流程)
+
+    Args:
+        state: 包含 messages 的当前状态
+
+    Returns:
+        str: "chat_and_profile" | "proposal_and_refine"
+    """
+    messages = state.get("messages", [])
+
+    if not messages:
+        print("[EntryPointRouter] 没有消息，进入聊天流程")
+        return "chat_and_profile"
+
+    # 获取最后一条消息
+    last_msg = messages[-1]
+
+    # 只检查用户消息
+    if isinstance(last_msg, HumanMessage):
+        content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else str(last_msg.content).lower()
+
+        # 检查是否是编辑器命令
+        editor_keywords = ["edit", "editor", "整理档案", "整理"]
+        if any(keyword in content for keyword in editor_keywords):
+            print("[EntryPointRouter] 检测到编辑器命令，直接进入编辑器")
+            return "proposal_and_refine"
+
+    print("[EntryPointRouter] 进入聊天流程")
+    return "chat_and_profile"
+
+
+
+
 def asset_extraction_router(state: AssetExtractionState) -> str:
     """
     资产提取父图的路由函数
@@ -91,6 +132,10 @@ def asset_extraction_router(state: AssetExtractionState) -> str:
     - 继续聊天 (chat_and_profile)
     - 进入整理阶段 (proposal_and_refine)
     - 结束 (END)
+
+    注意：
+    - 使用 checkpoint 恢复状态，profile_loader 只在首次执行
+    - 每次用户输入都会启动一轮新的 chat -> profiler 流程
 
     Args:
         state: 包含 last_turn_analysis 的当前状态
@@ -101,8 +146,8 @@ def asset_extraction_router(state: AssetExtractionState) -> str:
     analysis = state.get("last_turn_analysis")
 
     if not analysis:
-        print("[AssetExtractionRouter] last_turn_analysis 为空，继续聊天")
-        return "continue_chat"
+        print("[AssetExtractionRouter] last_turn_analysis 为空，流程结束")
+        return "end"
 
     is_ready = analysis.get("is_ready_to_refine", False)
 
@@ -110,8 +155,8 @@ def asset_extraction_router(state: AssetExtractionState) -> str:
         print(f"[AssetExtractionRouter] 触发整理阶段（原因：累积信息 >= 10 条）")
         return "enter_refinement"
 
-    print(f"[AssetExtractionRouter] 继续聊天（未达到整理阈值）")
-    return "continue_chat"
+    print(f"[AssetExtractionRouter] 未达到整理阈值，流程结束（等待用户输入）")
+    return "end"
 
 
 # =============================================================================
@@ -125,9 +170,12 @@ def create_asset_extraction_subgraph(checkpointer=None):
     该父图编排两个子图的执行流程：
     1. 默认进入 chat_and_profile 子图
     2. chat_and_profile 结束后，根据 router 决定：
-       - continue_chat: 重新进入 chat_and_profile
+       - end: 父图结束（用户可以发送新消息，使用 checkpoint 恢复状态）
        - enter_refinement: 进入 proposal_and_refine
-    3. proposal_and_refine 结束后，根据其返回状态决定下一步
+    3. proposal_and_refine 结束后，返回父图 END
+
+    重要：每次用户输入都会调用图，使用 checkpoint 恢复之前的状态。
+    这样 profile_loader 只在首次执行，后续轮次会跳过（通过检查 state.l1_observations_summary）
 
     Args:
         checkpointer: LangGraph checkpointer（可选，用于持久化状态）
@@ -146,21 +194,28 @@ def create_asset_extraction_subgraph(checkpointer=None):
     workflow.add_node("chat_and_profile", chat_subgraph)
     workflow.add_node("proposal_and_refine", proposal_subgraph)
 
-    # 设置入口点：默认从 chat_and_profile 开始
-    workflow.set_entry_point("chat_and_profile")
+    # 设置入口点：使用条件边从 START 路由到对应子图
+    # 这样可以在入口时就检查用户输入，决定去聊天还是编辑器
+    workflow.add_conditional_edges(
+        START,
+        entry_point_router,
+        {
+            "chat_and_profile": "chat_and_profile",
+            "proposal_and_refine": "proposal_and_refine",
+        }
+    )
 
     # 添加条件边：chat_and_profile 结束后的路由
     workflow.add_conditional_edges(
         "chat_and_profile",
         asset_extraction_router,
         {
-            "continue_chat": "chat_and_profile",  # 继续聊天
+            "end": END,  # 流程结束（等待用户下一次输入）
             "enter_refinement": "proposal_and_refine",  # 进入整理阶段
         }
     )
 
     # 添加边：proposal_and_refine 结束后到父图 END
-    # TODO: 将来可能需要根据 proposal_and_refine 的返回状态决定是否回到 chat
     workflow.add_edge("proposal_and_refine", END)
 
     # 编译父图（带 checkpointer，如果提供）

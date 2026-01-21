@@ -7,7 +7,10 @@
 from sqlmodel import Session, select
 from app.db.init_db import get_engine
 from app.models.observation import RawObservation, ObservationCategory, ObservationStatus
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.agent.subgraphs.asset_extraction.proposal_and_refine.state import ProfileItemSchema
 
 
 def should_save_observation(
@@ -191,9 +194,9 @@ def get_existing_observations_summary(user_id: int, max_per_category: int = 20) 
 
             # 按分类整理
             by_category = {
-                ObservationCategory.SKILL_DETECT: [],
-                ObservationCategory.TRAIT_DETECT: [],
-                ObservationCategory.EXPERIENCE_FRAGMENT: [],
+                ObservationCategory.SKILL: [],
+                ObservationCategory.TRAIT: [],
+                ObservationCategory.EXPERIENCE: [],
                 ObservationCategory.PREFERENCE: []
             }
 
@@ -224,3 +227,87 @@ def get_existing_observations_summary(user_id: int, max_per_category: int = 20) 
     except Exception as e:
         print(f"[get_existing_observations_summary Error] 读取失败: {str(e)}")
         return ("【读取已有信息失败，本次对话将不进行增量去重】", False)
+
+
+def format_draft_for_display(draft: "ProfileItemSchema", index: int, total: int) -> str:
+    """
+    格式化单条草稿用于控制台展示
+
+    Args:
+        draft: 草稿对象 (ProfileItemSchema)
+        index: 当前草稿索引 (0-based)
+        total: 草稿总数
+
+    Returns:
+        str: 格式化后的草稿文本
+    """
+    separator = "━" * 60
+    tags_str = ", ".join(draft.tags) if draft.tags else "无"
+    source_ids_str = ", ".join(map(str, draft.source_l1_ids)) if draft.source_l1_ids else "无"
+
+    return f"""
+{separator}
+【草稿 {index + 1}/{total}】{draft.section_name}
+{separator}
+
+{draft.standard_content}
+
+标签: {tags_str}
+来源: L1观察ID [{source_ids_str}]
+{separator}
+"""
+
+
+def format_current_draft_for_display(
+    drafts: List["ProfileItemSchema"],
+    active_index: int
+) -> str:
+    """
+    格式化当前待审阅的草稿
+
+    根据 active_index 从 drafts 中提取当前草稿并格式化展示。
+    用于在用户交互时显示待审阅的草稿内容。
+
+    Args:
+        drafts: 草稿列表 (List[ProfileItemSchema])
+        active_index: 当前活跃索引 (0-based)
+
+    Returns:
+        str: 格式化后的当前草稿文本，如果索引无效则返回提示信息
+    """
+    if not drafts:
+        return "\n【当前无草稿】\n"
+
+    if active_index < 0 or active_index >= len(drafts):
+        return f"\n【索引错误: active_index={active_index}, 草稿总数={len(drafts)}】\n"
+
+    current_draft = drafts[active_index]
+    return format_draft_for_display(current_draft, active_index, len(drafts))
+
+
+def format_all_drafts_summary(drafts: List["ProfileItemSchema"]) -> str:
+    """
+    格式化所有草稿的摘要信息
+
+    用于快速预览所有生成的草稿，显示每条的标题和简要信息。
+
+    Args:
+        drafts: 草稿列表 (List[ProfileItemSchema])
+
+    Returns:
+        str: 格式化后的摘要文本
+    """
+    if not drafts:
+        return "\n【无草稿】\n"
+
+    lines = ["\n" + "━" * 60, "【草稿总览】", "━" * 60]
+
+    for idx, draft in enumerate(drafts, 1):
+        content_preview = draft.standard_content[:50] + "..." if len(draft.standard_content) > 50 else draft.standard_content
+        tags_str = ", ".join(draft.tags[:3]) if draft.tags else "无"
+        lines.append(f"{idx}. [{draft.section_name}] {content_preview}")
+        lines.append(f"   标签: {tags_str} | 来源: {len(draft.source_l1_ids)} 条观察")
+        lines.append("")
+
+    lines.append("━" * 60 + "\n")
+    return "\n".join(lines)

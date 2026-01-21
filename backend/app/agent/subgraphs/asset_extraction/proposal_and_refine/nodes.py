@@ -15,8 +15,10 @@ Proposal & Refine 子图节点 (T2-01.2 续)
 
 from typing import List, Literal
 from langgraph.graph.state import RunnableConfig
-from langchain_core.messages import SystemMessage, AIMessage
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
 from sqlmodel import Session, select
+
+from app.agent.subgraphs.asset_extraction.utils import format_current_draft_for_display
 
 from app.agent.subgraphs.asset_extraction.proposal_and_refine.state import (
     EditorState,
@@ -31,6 +33,7 @@ from app.agent.prompts import (
     REFINER_SYSTEM_PROMPT,
     REFINER_USER_PROMPT_TEMPLATE,
 )
+from app.agent.sharednodes.user_utils import get_or_create_user
 from app.db.init_db import get_engine
 from app.models.observation import RawObservation, ObservationStatus
 from app.models.profile import ProfileSection, ProfileSectionKey
@@ -39,6 +42,27 @@ from app.models.profile import ProfileSection, ProfileSectionKey
 # =============================================================================
 # 辅助函数
 # =============================================================================
+
+def _get_username_from_config(config: RunnableConfig) -> str:
+    """
+    从 LangGraph config 中获取 username
+
+    Args:
+        config: LangGraph 的 RunnableConfig
+
+    Returns:
+        str: 用户名，默认 'me'
+
+    Raises:
+        ValueError: 如果 config 格式不正确
+    """
+    configurable = config.get("configurable", {})
+    username = configurable.get("username", "me")
+
+    if not isinstance(username, str):
+        raise ValueError(f"username must be a string, got {type(username).__name__}")
+
+    return username
 
 def _map_section_name_to_key(section_name: str) -> ProfileSectionKey:
     """
@@ -93,7 +117,12 @@ def editor_loader_node(state: EditorState, config: RunnableConfig) -> EditorStat
     """
     print("--- 进入 EditorLoader 节点，正在进货... ---")
 
-    user_id = config.get("configurable", {}).get("user_id", 1)
+    # 使用 username 解析获取 user_id（与 chat_and_profile 子图保持一致）
+    username = _get_username_from_config(config)
+    user = get_or_create_user(username)
+    user_id = user.id
+
+    print(f"[EditorLoader] 加载用户观察: username={username}, user_id={user_id}")
 
     with Session(get_engine()) as session:
         statement = select(RawObservation).where(
@@ -156,7 +185,7 @@ def proposer_node(state: EditorState, config: RunnableConfig) -> EditorState:
         structured_llm = llm.with_structured_output(ProposerOutput)
         messages = [
             SystemMessage(content=PROPOSER_SYSTEM_PROMPT),
-            AIMessage(content=user_prompt)
+            HumanMessage(content=user_prompt)
         ]
 
         result: ProposerOutput = structured_llm.invoke(messages)
@@ -203,7 +232,16 @@ def human_node(state: EditorState, config: RunnableConfig) -> EditorState:
     current_draft = drafts[idx]
     print(f"[Human] 展示第 {idx + 1}/{len(drafts)} 条草稿: {current_draft.section_name}")
 
-    # 这个节点通常是 interrupt_before 的目标，执行到这会暂停
+    # 展示当前草稿供用户审阅
+    print(format_current_draft_for_display(drafts, idx))
+
+    # 提示用户操作
+    print("请审阅以上草稿：")
+    print("  - 输入修改意见（如：'把Python改成Java'）")
+    print("  - 或输入 '确认' / 'confirm' 保存本条")
+    print("  - 或输入 '跳过' / 'skip' 跳过本条")
+
+    # 这个节点配置为 interrupt_after，执行完后会暂停
     # 返回 state 不变，等待用户输入后继续
     return state
 
@@ -296,7 +334,7 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
         structured_llm = llm.with_structured_output(ProfileItemSchema)
         messages_llm = [
             SystemMessage(content=REFINER_SYSTEM_PROMPT),
-            AIMessage(content=user_prompt)
+            HumanMessage(content=user_prompt)
         ]
 
         refined_draft: ProfileItemSchema = structured_llm.invoke(messages_llm)
@@ -344,9 +382,13 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
         return state
 
     draft = drafts[idx]
-    user_id = config.get("configurable", {}).get("user_id", 1)
 
-    print(f"[SingleSaver] 保存第 {idx + 1} 条草稿: {draft.section_name}")
+    # 使用 username 解析获取 user_id（与 chat_and_profile 子图保持一致）
+    username = _get_username_from_config(config)
+    user = get_or_create_user(username)
+    user_id = user.id
+
+    print(f"[SingleSaver] 保存第 {idx + 1} 条草稿: {draft.section_name} (username={username}, user_id={user_id})")
 
     try:
         with Session(get_engine()) as session:
