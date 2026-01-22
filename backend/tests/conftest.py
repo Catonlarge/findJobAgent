@@ -160,11 +160,16 @@ def test_profile_sections(test_db_session: Session, test_user: User) -> list[Pro
 def test_chat_session(test_db_session: Session, test_user: User) -> ChatSession:
     """
     创建测试会话
+
+    注意：session_uuid 和 thread_id 使用相同的值
+    这与 ChatService 的实现一致（thread_id = session_uuid）
     """
     import uuid
+    session_uuid = str(uuid.uuid4())
     session = ChatSession(
         user_id=test_user.id,
-        thread_id=str(uuid.uuid4()),
+        session_uuid=session_uuid,
+        thread_id=session_uuid,  # thread_id 等于 session_uuid
         intent=ChatIntent.RESUME_REFINE,
         title="测试简历优化会话",
         context_data={"test": True}

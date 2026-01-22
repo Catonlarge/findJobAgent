@@ -16,6 +16,7 @@ Proposal & Refine 子图节点 (T2-01.2 续)
 from typing import List, Literal
 from langgraph.graph.state import RunnableConfig
 from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
+from langgraph.types import interrupt
 from sqlmodel import Session, select
 
 from app.agent.subgraphs.asset_extraction.utils import format_current_draft_for_display
@@ -161,9 +162,10 @@ def proposer_node(state: EditorState, config: RunnableConfig) -> EditorState:
     2. 使用 LLM 将观察聚类、去重、整理成 3-5 条职业化草稿
     3. 初始化游标循环：设置 active_index=0
     """
-    print("--- 进入 Proposer 节点 ---")
+    print("--- 进入 Proposer 节点 ---", flush=True)
 
     raw_materials: List[ObservationSchema] = state.get("raw_materials", [])
+    print(f"[Proposer] raw_materials 数量: {len(raw_materials)}", flush=True)
 
     if not raw_materials:
         print("[Proposer] 没有原材料，生成空草稿列表")
@@ -212,38 +214,91 @@ def proposer_node(state: EditorState, config: RunnableConfig) -> EditorState:
 
 def human_node(state: EditorState, config: RunnableConfig) -> EditorState:
     """
-    Human 节点：人机交互断点
+    Human 节点：人机交互断点（使用 interrupt() 函数）
 
     核心职责：
-    1. 展示 current_drafts[active_index] 给用户
-    2. 等待用户输入（通过 LangGraph interrupt 机制）
-    3. 用户输入后通过 messages 传给 Router
+    1. 展示当前草稿给用户（在 interrupt 之前）
+    2. 调用 interrupt() 暂停执行，等待用户输入
+    3. 接收用户输入（通过 Command(resume=...) 传递）
+    4. 将用户输入添加到 state.messages 中
 
-    注意：这个节点本身不返回任何状态变更，只作为断点。
-    前端需要读取 state["current_drafts"][state["active_index"]] 并展示。
+    错误恢复模式：
+    - 当 save_error 不为 None 时，显示错误信息而非草稿
+    - 用户可以选择：retry(重试) / skip(跳过)
+
+    架构说明：
+    - 使用节点级中断（interrupt()），而非系统级中断（interrupt_before）
+    - 这样可以在嵌套子图中正确传递数据
+    - ChatService 发送 Command(resume={"messages": [...]}) 后
+    - interrupt() 会返回这个字典，节点将其返回以更新 State
     """
+    print("\n[Human Node] 准备进入审核流程...")
+
+    # 检查是否处于错误恢复模式
+    save_error = state.get("save_error")
     idx = state.get("active_index", 0)
     drafts = state.get("current_drafts", [])
 
-    if idx >= len(drafts):
-        print(f"[Human] 索引 {idx} 超出范围，应该结束")
-        return state
+    if save_error:
+        # 【错误恢复模式】显示错误信息
+        print("=" * 50)
+        print("[错误恢复模式]")
+        print("-" * 20)
+        print(f"错误: {save_error.get('error', '未知错误')}")
+        print(f"草稿索引: 第 {save_error.get('draft_index', idx) + 1} 条")
+        if save_error.get('draft_summary'):
+            print(f"草稿摘要: {save_error['draft_summary']}")
+        print("=" * 50)
+        print("[请输入] retry(重试保存) / skip(跳过本条):")
+    else:
+        # 【正常审核模式】展示当前草稿
+        current_draft = None
+        if drafts and idx < len(drafts):
+            current_draft = drafts[idx]
 
-    current_draft = drafts[idx]
-    print(f"[Human] 展示第 {idx + 1}/{len(drafts)} 条草稿: {current_draft.section_name}")
+        if current_draft:
+            print("=" * 50)
+            print(f"[待审核草稿] (第 {idx + 1}/{len(drafts)} 条)")
+            print("-" * 20)
+            print(f"[分类]: {current_draft.section_name}")
+            print(f"[内容]: {current_draft.standard_content}")
+            if current_draft.tags:
+                print(f"[标签]: {', '.join(current_draft.tags)}")
+            print("=" * 50)
+            print("[请输入您的修改建议]（或者输入 '确认' / 'confirm' 保存本条）:")
+        else:
+            print("[警告] 当前没有找到有效的草稿，但程序暂停于此。")
 
-    # 展示当前草稿供用户审阅
-    print(format_current_draft_for_display(drafts, idx))
+    # 【暂停阶段】挂起等待指令
+    # 程序运行到这里会完全停止
+    # value 参数的内容可以在 LangGraph Studio 或 checkpointer 里看到
+    user_feedback_payload = interrupt(value={
+        "task": "error_recovery" if save_error else "review",
+        "draft_index": idx,
+        "save_error": save_error
+    })
 
-    # 提示用户操作
-    print("请审阅以上草稿：")
-    print("  - 输入修改意见（如：'把Python改成Java'）")
-    print("  - 或输入 '确认' / 'confirm' 保存本条")
-    print("  - 或输入 '跳过' / 'skip' 跳过本条")
+    # --- [这里是时间静止线，直到 ChatService 发送 Command] ---
 
-    # 这个节点配置为 interrupt_after，执行完后会暂停
-    # 返回 state 不变，等待用户输入后继续
-    return state
+    # 【恢复阶段】处理接收到的数据
+    # user_feedback_payload 就是 ChatService 发送过来的 {"messages": [HumanMessage(...)]}
+    print(f"[Human Node] 收到指令，继续运行...")
+    print(f"[Human Node] DEBUG: 收到的 payload 类型 = {type(user_feedback_payload)}")
+    if isinstance(user_feedback_payload, dict):
+        print(f"[Human Node] DEBUG: payload keys = {user_feedback_payload.keys()}")
+        if "messages" in user_feedback_payload:
+            print(f"[Human Node] DEBUG: messages 数量 = {len(user_feedback_payload['messages'])}")
+            if user_feedback_payload["messages"]:
+                last_msg = user_feedback_payload["messages"][-1]
+                print(f"[Human Node] DEBUG: 最后一条消息内容 = '{last_msg.content}'")
+
+    # 【更新 State】
+    # 直接返回接收到的 payload，LangGraph 会自动将其合并到 EditorState 中
+    # 因为 payload 结构是 {"messages": [...]}，符合 State 定义
+    if isinstance(user_feedback_payload, dict):
+        return user_feedback_payload
+
+    return {}
 
 
 def route_scheduler(state: EditorState) -> Literal["human_node", "__end__"]:
@@ -262,8 +317,29 @@ def route_scheduler(state: EditorState) -> Literal["human_node", "__end__"]:
     if idx < len(drafts):
         return "human_node"
     else:
-        print("[Scheduler] 所有草稿已处理完毕，结束")
+        print("\n" + "=" * 50)
+        print("所有草稿已审核完成并保存")
+        print("您可以继续与 AI 对话，系统会根据新的对话内容更新您的人生说明书")
+        print("=" * 50 + "\n")
         return "__end__"
+
+
+def route_after_saver(state: EditorState) -> Literal["human_node", "__end__"]:
+    """
+    SingleSaver 后的路由：根据是否有错误决定去向
+
+    判断逻辑：
+    - save_error 不为 None -> human_node (错误恢复模式)
+    - save_error 为 None -> route_scheduler (正常流程)
+    """
+    save_error = state.get("save_error")
+
+    if save_error:
+        print(f"[AfterSaver] 检测到保存错误，返回 human_node 进行错误恢复")
+        return "human_node"
+    else:
+        # 没有错误，使用正常的 scheduler 路由
+        return route_scheduler(state)
 
 
 def route_user_intent(state: EditorState) -> Literal["refiner_node", "single_saver_node"]:
@@ -271,24 +347,40 @@ def route_user_intent(state: EditorState) -> Literal["refiner_node", "single_sav
     Router 边：根据用户反馈决定下一步
 
     判断逻辑：
-    - 用户输入包含 "确认"/"通过"/"ok"/"1" -> single_saver_node (保存)
-    - 其他 -> refiner_node (修改)
+    - 如果处于错误恢复模式 (save_error 不为 None):
+      - "retry" -> single_saver_node (重试保存)
+      - "skip" -> single_saver_node (由 SingleSaver 检测并跳过)
+    - 正常审核模式:
+      - 用户输入包含 "确认"/"通过"/"ok"/"1" -> single_saver_node (保存)
+      - 其他 -> refiner_node (修改)
     """
     messages = state.get("messages", [])
+    save_error = state.get("save_error")
+    print(f"[Router] DEBUG: messages 数量 = {len(messages)}, save_error={save_error is not None}")
+
     if not messages:
-        print("[Router] 没有用户消息，默认返回 refiner")
+        # 没有用户消息，默认返回 refiner（防御性编程）
+        print("[Router] DEBUG: 没有用户消息，默认返回 refiner")
         return "refiner_node"
 
     last_msg = messages[-1]
     content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else last_msg.content
+    print(f"[Router] DEBUG: 最后一条消息内容 = '{content}'")
 
-    # 确认关键词
-    confirm_keywords = ["确认", "通过", "ok", "好的", "1", "yes", "save"]
+    # 【错误恢复模式路由】
+    if save_error:
+        # 无论是 retry 还是 skip，都进入 SingleSaver
+        # SingleSaver 会检查用户指令决定是重试还是跳过
+        print("[Router] 错误恢复模式，进入 SingleSaver 处理")
+        return "single_saver_node"
+
+    # 【正常审核模式路由】
+    confirm_keywords = ["确认", "通过", "ok", "好的", "1", "yes", "save", "confirm"]
     if any(keyword in content for keyword in confirm_keywords):
-        print(f"[Router] 用户确认，进入 SingleSaver")
+        print("[Router] 用户确认，进入 SingleSaver")
         return "single_saver_node"
     else:
-        print(f"[Router] 用户要求修改，进入 Refiner")
+        print("[Router] 用户要求修改，进入 Refiner")
         return "refiner_node"
 
 
@@ -365,10 +457,15 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
     SingleSaver 节点：即时存档员
 
     核心职责：
-    1. 锁定 current_drafts[active_index]
-    2. 写入 L2 profile_sections 表
-    3. 核销对应的 L1 观察（状态翻转为 promoted）
-    4. active_index += 1，清空 messages
+    1. 检查用户指令（错误恢复模式下的 skip）
+    2. 锁定 current_drafts[active_index]
+    3. 写入 L2 profile_sections 表
+    4. 核销对应的 L1 观察（状态翻转为 promoted）
+    5. active_index += 1，清空 messages
+
+    错误恢复模式：
+    - 如果 save_error 不为 None 且用户输入 "skip"，则跳过当前草稿
+    - 如果 save_error 不为 None 且用户输入 "retry"，则重试保存
 
     这是实现"滚动更新"的第二步：用掉的被踢出。
     """
@@ -376,6 +473,27 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
 
     idx = state.get("active_index", 0)
     drafts = state.get("current_drafts", [])
+    save_error = state.get("save_error")
+
+    # 检查是否需要跳过（错误恢复模式）
+    if save_error:
+        messages = state.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else ""
+            skip_keywords = ["skip", "跳过", "放弃"]
+            if any(keyword in content for keyword in skip_keywords):
+                print(f"[SingleSaver] 错误恢复：用户选择跳过第 {idx + 1} 条草稿")
+                next_index = idx + 1
+                return {
+                    "active_index": next_index,
+                    "save_error": None,  # 清除错误状态
+                    "messages": []
+                }
+            else:
+                print(f"[SingleSaver] 错误恢复：用户选择重试保存第 {idx + 1} 条草稿")
+                # 清除错误状态，继续正常保存流程
+                save_error = None
 
     if idx >= len(drafts):
         print("[SingleSaver] 索引超出范围")
@@ -393,18 +511,58 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
     try:
         with Session(get_engine()) as session:
             # 1. 写入 L2 profile_sections
-            # 注意：这里简化处理，直接写入标准内容
-            # 实际可能需要根据 section_name 映射到 ProfileSectionKey
-            new_section = ProfileSection(
-                user_id=user_id,
-                section_key="career_potential",  # 简化处理，实际应动态映射
-                content={
-                    "standard_content": draft.standard_content,
-                    "tags": draft.tags,
-                    "section_name": draft.section_name
-                }
-            )
-            session.add(new_section)
+            # 根据 section_name 动态映射到 ProfileSectionKey
+            section_key = _map_section_name_to_key(draft.section_name)
+
+            # 检查是否已存在相同 section_key 的记录
+            from app.models.profile import ProfileSection
+            existing_section = session.query(ProfileSection).filter(
+                ProfileSection.user_id == user_id,
+                ProfileSection.section_key == section_key
+            ).first()
+
+            if existing_section:
+                # 累积模式：将新草稿追加到 drafts 列表
+                if isinstance(existing_section.content, dict):
+                    # 确保 drafts 列表存在
+                    if "drafts" not in existing_section.content:
+                        existing_section.content["drafts"] = []
+
+                    # 追加新草稿
+                    existing_section.content["drafts"].append({
+                        "standard_content": draft.standard_content,
+                        "tags": draft.tags,
+                        "section_name": draft.section_name,
+                        "source_l1_ids": draft.source_l1_ids
+                    })
+                    print(f"[SingleSaver] 追加到现有 section_key={section_key}, drafts 数量={len(existing_section.content['drafts'])}")
+                else:
+                    # 如果 content 不是 dict，重新初始化
+                    existing_section.content = {
+                        "drafts": [{
+                            "standard_content": draft.standard_content,
+                            "tags": draft.tags,
+                            "section_name": draft.section_name,
+                            "source_l1_ids": draft.source_l1_ids
+                        }]
+                    }
+                    print(f"[SingleSaver] 重新初始化 section_key={section_key}")
+            else:
+                # 如果不存在，创建新记录
+                new_section = ProfileSection(
+                    user_id=user_id,
+                    section_key=section_key,
+                    content={
+                        "drafts": [{
+                            "standard_content": draft.standard_content,
+                            "tags": draft.tags,
+                            "section_name": draft.section_name,
+                            "source_l1_ids": draft.source_l1_ids
+                        }]
+                    }
+                )
+                session.add(new_section)
+                print(f"[SingleSaver] 创建新 section_key={section_key}")
 
             # 2. 核销 L1（状态翻转为 promoted）
             if draft.source_l1_ids:
@@ -420,11 +578,24 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
             session.commit()
             print(f"[SingleSaver] 已保存并核销 {len(draft.source_l1_ids)} 条 L1 观察")
 
+            # 成功：前进索引，清空错误状态，清空消息
+            next_index = idx + 1
+            return {
+                "active_index": next_index,
+                "save_error": None,  # 清除错误状态
+                "messages": []
+            }
+
     except Exception as e:
         print(f"[SingleSaver Error] 数据库操作失败: {str(e)}")
 
-    # 3. 翻页逻辑
-    return {
-        "active_index": idx + 1,
-        "messages": []  # 清空对话，为下一条做准备
-    }
+        # 失败：不前进索引，设置错误状态，返回 human_node 让用户决定
+        error_message = f"保存草稿失败（第 {idx + 1} 条）：{str(e)}"
+        return {
+            "save_error": {
+                "error": error_message,
+                "draft_index": idx,
+                "draft_summary": f"{draft.section_name}: {draft.standard_content[:50]}..."
+            },
+            "messages": [AIMessage(content=error_message + "\n\n请输入：retry(重试) / skip(跳过)")]
+        }

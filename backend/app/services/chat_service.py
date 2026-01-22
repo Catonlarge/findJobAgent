@@ -5,6 +5,7 @@
 1. 身份锚定 (Identity Anchoring)：username -> user_db_id
 2. 会话容器保证 (Session Container Guarantee)
 3. 消息存储与 LangGraph 调用
+4. Interrupt 恢复机制：使用 Command(resume=...) 从中断点恢复执行
 """
 
 import uuid
@@ -12,6 +13,7 @@ from typing import Optional, Generator, Any
 from datetime import datetime
 
 from langchain_core.messages import HumanMessage, AIMessage
+from langgraph.types import Command
 
 from app.db.init_db import get_engine
 from app.repositories.user_repository import UserRepository
@@ -94,10 +96,17 @@ class ChatService:
         1. 生成用户消息 UUID
         2. 立即写入数据库（用户消息）
         3. 更新会话 updated_at
-        4. 调用 LangGraph 子图
-        5. 流式输出 AI 回复
-        6. 写入数据库（AI 消息）
-        7. 更新会话 updated_at
+        4. 检查是否有未完成的 LangGraph interrupt
+        5. 如果有 interrupt，使用 Command(resume=...) 恢复执行
+        6. 如果没有 interrupt，正常调用图
+        7. 流式输出 AI 回复
+        8. 写入数据库（AI 消息）
+        9. 更新会话 updated_at
+
+        Interrupt 恢复机制：
+        - 使用 graph.get_state(config) 检查是否有未完成的 interrupt
+        - 如果 state.next 不为空，说明有 interrupt，使用 Command(resume=...) 恢复
+        - 这样可以避免重新执行整个图，直接从中断点继续
 
         Args:
             user_text: 用户输入文本
@@ -127,34 +136,76 @@ class ChatService:
         print(f"[ChatService] 用户消息已存库: UUID={user_msg_uuid}")
 
         # 4. 准备 LangGraph 配置
-        # 注意：config 中传 username（字符串），节点内部再根据需要查询整数 ID
+        # 注意：config 中必须传 username，节点内部通过 _get_username_from_config 读取
         config = {
             "configurable": {
-                "user_id": self.username,  # 传字符串 username
+                "username": self.username,
                 "thread_id": self.thread_id
             }
         }
 
-        # 5. 调用图并流式输出
-        inputs = {"messages": [user_message]}
+        # 5. 检查是否有未完成的 interrupt
+        state = graph.get_state(config)
+        # 注意：state.next 是一个元组，空元组 () 表示没有 interrupt
+        # 使用 bool(state.next) 来检查（空元组的布尔值是 False）
+        has_interrupt = bool(state.next)
+
         ai_message_obj: Optional[AIMessage] = None
         full_response = ""
 
-        for event in graph.stream(inputs, config=config, stream_mode="values"):
-            # 捕获 AI 生成的消息
-            if "messages" in event:
-                messages = event["messages"]
-                if messages:
-                    latest_msg = messages[-1]
-                    if isinstance(latest_msg, AIMessage):
-                        ai_message_obj = latest_msg
-                        content = latest_msg.content
-                        if isinstance(content, str):
-                            # 流式输出
-                            yield content
-                            full_response = content
+        if has_interrupt:
+            # 6a. 有 interrupt，使用 Command(resume=...) 恢复执行
+            print(f"[ChatService] 检测到未完成的 interrupt，使用 Command(resume=...) 恢复执行")
+            print(f"[ChatService] 下一步节点: {state.next}")
 
-        # 6. 写入数据库（AI 消息）
+            # 构造透传数据包：这个字典会被 human_node 里的 interrupt() 接收
+            # 并作为 human_node 的返回值，最终更新到 State["messages"]
+            resume_payload = {
+                "messages": [
+                    HumanMessage(content=user_text, id=user_msg_uuid)
+                ]
+            }
+
+            # 使用 Command(resume=...) 恢复执行
+            # 注意：这里不需要 update= 参数，因为 human_node 会负责 return payload
+            # LangGraph 会自动将 human_node 的返回值合并到 EditorState 中
+            for event in graph.stream(
+                Command(resume=resume_payload),
+                config=config,
+                stream_mode="values"
+            ):
+                # 捕获 AI 生成的消息
+                if "messages" in event:
+                    messages = event["messages"]
+                    if messages:
+                        latest_msg = messages[-1]
+                        if isinstance(latest_msg, AIMessage):
+                            ai_message_obj = latest_msg
+                            content = latest_msg.content
+                            if isinstance(content, str):
+                                # 流式输出
+                                yield content
+                                full_response = content
+        else:
+            # 6b. 没有 interrupt，正常调用图
+            print(f"[ChatService] 正常执行流程")
+            inputs = {"messages": [user_message]}
+
+            for event in graph.stream(inputs, config=config, stream_mode="values"):
+                # 捕获 AI 生成的消息
+                if "messages" in event:
+                    messages = event["messages"]
+                    if messages:
+                        latest_msg = messages[-1]
+                        if isinstance(latest_msg, AIMessage):
+                            ai_message_obj = latest_msg
+                            content = latest_msg.content
+                            if isinstance(content, str):
+                                # 流式输出
+                                yield content
+                                full_response = content
+
+        # 7. 写入数据库（AI 消息）
         if ai_message_obj:
             ai_msg_uuid = ai_message_obj.id
             with Session(get_engine()) as session:
@@ -166,7 +217,7 @@ class ChatService:
                     msg_uuid=ai_msg_uuid
                 )
 
-            # 7. 更新会话时间戳
+            # 8. 更新会话时间戳
             self._touch_session()
             print(f"[ChatService] AI 消息已存库: UUID={ai_msg_uuid}")
 

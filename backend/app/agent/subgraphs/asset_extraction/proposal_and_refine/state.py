@@ -110,4 +110,10 @@ class EditorState(TypedDict, total=False):
     # 关键字段：Scheduler 节点通过比较 active_index 和 len(current_drafts) 决定是否继续
     active_index: int
 
+    # --- 5. 错误恢复 (Error Recovery) ---
+    # 作用：保存失败时的错误信息，用于 human_node 显示和用户决策
+    # 格式：{"error": "错误消息", "draft_index": 3}
+    # 生命周期：SingleSaver 失败时设置 -> 用户处理后清除
+    save_error: Optional[dict]
+
 

@@ -71,14 +71,14 @@ class TestAssetExtractionState:
 class TestAssetExtractionRouter:
     """测试父图路由函数"""
 
-    def test_router_no_analysis_continues_chat(self):
-        """测试没有分析结果时继续聊天"""
+    def test_router_no_analysis_ends(self):
+        """测试没有分析结果时结束流程"""
         state: AssetExtractionState = {"last_turn_analysis": None}
         result = asset_extraction_router(state)
-        assert result == "continue_chat"
+        assert result == "end"
 
-    def test_router_below_threshold_continues_chat(self):
-        """测试未达到阈值时继续聊天"""
+    def test_router_below_threshold_ends(self):
+        """测试未达到阈值时结束流程（等待用户输入）"""
         state: AssetExtractionState = {
             "last_turn_analysis": {
                 "has_new_info": True,
@@ -87,7 +87,7 @@ class TestAssetExtractionRouter:
             }
         }
         result = asset_extraction_router(state)
-        assert result == "continue_chat"
+        assert result == "end"
 
     def test_router_above_threshold_enters_refinement(self):
         """测试达到阈值时进入整理阶段"""
@@ -101,15 +101,15 @@ class TestAssetExtractionRouter:
         result = asset_extraction_router(state)
         assert result == "enter_refinement"
 
-    def test_router_missing_is_ready_key_continues_chat(self):
-        """测试缺少 is_ready_to_refine 键时默认继续聊天"""
+    def test_router_missing_is_ready_key_ends(self):
+        """测试缺少 is_ready_to_refine 键时默认结束流程"""
         state: AssetExtractionState = {
             "last_turn_analysis": {
                 "has_new_info": True
             }
         }
         result = asset_extraction_router(state)
-        assert result == "continue_chat"
+        assert result == "end"
 
 
 class TestCreateAssetExtractionSubgraph:

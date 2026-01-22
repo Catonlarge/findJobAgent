@@ -8,8 +8,28 @@ import pytest
 from unittest.mock import Mock, MagicMock
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph.state import RunnableConfig
+from sqlmodel import Session
 
 from app.agent.models import ProfilerOutput, SingleObservation
+from app.db.init_db import get_engine
+from app.models import User
+
+
+@pytest.fixture(scope="function")
+def test_user():
+    """
+    创建测试用户（每个测试函数使用唯一的用户名）
+    """
+    import uuid
+    engine = get_engine()
+    with Session(engine) as session:
+        # 使用唯一的用户名避免冲突
+        unique_username = f"test_user_{uuid.uuid4().hex[:8]}"
+        user = User(username=unique_username, basic_info={"name": "测试用户", "city": "Beijing"})
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
 
 
 @pytest.fixture(scope="function")

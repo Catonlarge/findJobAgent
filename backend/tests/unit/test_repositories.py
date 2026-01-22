@@ -116,7 +116,7 @@ class TestSessionRepository:
         import uuid
         session = session_repository.create_session(
             user_id=test_user.id,
-            thread_id=str(uuid.uuid4()),
+            session_uuid=str(uuid.uuid4()),
             intent=ChatIntent.RESUME_REFINE,
             title="优化简历"
         )
@@ -139,7 +139,7 @@ class TestSessionRepository:
             import uuid
             session_repository.create_session(
                 user_id=test_user.id,
-                thread_id=str(uuid.uuid4()),
+                session_uuid=str(uuid.uuid4()),
                 intent=ChatIntent.GENERAL_CHAT,
                 title=f"会话 {i+1}"
             )
@@ -159,6 +159,33 @@ class TestSessionRepository:
         assert message.id is not None
         assert message.session_id == test_chat_session.id
         assert message.role == MessageRole.USER
+
+    def test_create_message_with_uuid(self, session_repository, test_chat_session):
+        """测试创建带 msg_uuid 的消息"""
+        import uuid
+        msg_uuid = str(uuid.uuid4())
+        message = session_repository.create_message(
+            session_id=test_chat_session.id,
+            role=MessageRole.USER,
+            content="我会 Python",
+            msg_uuid=msg_uuid
+        )
+
+        assert message.id is not None
+        assert message.session_id == test_chat_session.id
+        assert message.role == MessageRole.USER
+        assert message.msg_uuid == msg_uuid
+
+    def test_create_message_without_uuid(self, session_repository, test_chat_session):
+        """测试创建不带 msg_uuid 的消息（向后兼容）"""
+        message = session_repository.create_message(
+            session_id=test_chat_session.id,
+            role=MessageRole.ASSISTANT,
+            content="你好！有什么可以帮助你的？"
+        )
+
+        assert message.id is not None
+        assert message.msg_uuid is None
 
     def test_get_messages_by_session_id(self, session_repository, test_chat_session, test_chat_messages):
         """测试获取会话的所有消息"""

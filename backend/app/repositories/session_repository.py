@@ -197,7 +197,8 @@ class SessionRepository:
         content: str,
         thought_process: Optional[str] = None,
         related_artifact_id: Optional[int] = None,
-        token_count: Optional[int] = None
+        token_count: Optional[int] = None,
+        msg_uuid: Optional[str] = None
     ) -> ChatMessage:
         """
         创建新消息
@@ -209,6 +210,7 @@ class SessionRepository:
             thought_process: CoT 思维过程（可选）
             related_artifact_id: 关联交付物 ID（可选）
             token_count: token 数量（可选）
+            msg_uuid: LangChain Message UUID（可选，用于异步关联）
 
         Returns:
             创建的 ChatMessage 对象
@@ -219,7 +221,8 @@ class SessionRepository:
             content=content,
             thought_process=thought_process,
             related_artifact_id=related_artifact_id,
-            token_count=token_count
+            token_count=token_count,
+            msg_uuid=msg_uuid
         )
         self.session.add(message)
         self.session.commit()

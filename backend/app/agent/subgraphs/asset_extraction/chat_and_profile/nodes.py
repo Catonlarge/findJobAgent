@@ -107,7 +107,7 @@ def profile_loader_node(state: ChatAndProfileState, config: RunnableConfig) -> C
     }
 
 
-def chat_node(state: ChatAndProfileState, _config: RunnableConfig) -> ChatAndProfileState:
+def chat_node(state: ChatAndProfileState, config: RunnableConfig) -> ChatAndProfileState:
     """
     ChatBot 节点：负责跟用户愉快的聊天，除此之外什么也不干
 
@@ -119,7 +119,7 @@ def chat_node(state: ChatAndProfileState, _config: RunnableConfig) -> ChatAndPro
 
     Args:
         state: 包含 messages 和 l1_observations_summary 的当前状态
-        _config: LangGraph 运行配置（此节点不依赖 config，保留签名兼容性）
+        config: LangGraph 运行配置（此节点不依赖 config，保留签名兼容性）
 
     Returns:
         ChatAndProfileState: 更新后的状态，包含新的 AI 回复消息

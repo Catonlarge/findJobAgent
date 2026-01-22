@@ -39,6 +39,7 @@ from app.agent.subgraphs.asset_extraction.proposal_and_refine.nodes import (
     refiner_node,
     single_saver_node,
     route_scheduler,
+    route_after_saver,
     route_user_intent,
 )
 
@@ -103,19 +104,20 @@ def create_proposal_and_refine_subgraph() -> StateGraph:
     # 添加边：refiner -> human (循环返回，继续修改)
     workflow.add_edge("refiner_node", "human_node")
 
-    # 添加边：single_saver -> scheduler (保存后检查是否还有下一条)
+    # 添加边：single_saver -> after_saver (保存后检查错误并决定下一步)
     workflow.add_conditional_edges(
         "single_saver_node",
-        route_scheduler,
+        route_after_saver,
         {
             "human_node": "human_node",
             "__end__": END,
         }
     )
 
-    # 编译子图，配置 human_node 为中断点
-    # interrupt_after: human_node 执行完后才中断，这样用户能看到草稿
-    compiled_graph = workflow.compile(interrupt_after=["human_node"])
+    # 编译子图：使用节点级中断（interrupt() 函数）
+    # 不再使用 interrupt_before，而是由 human_node 内部的 interrupt() 函数控制暂停
+    # 这样可以完美支持嵌套子图中的数据透传
+    compiled_graph = workflow.compile()
     return compiled_graph
 
 
