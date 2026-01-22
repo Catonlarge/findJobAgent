@@ -30,7 +30,7 @@
     workflow.add_node("asset_extraction", create_asset_extraction_subgraph())
 """
 
-from typing import TypedDict, Annotated, List
+from typing import TypedDict, Annotated, List, Optional
 from langgraph.graph import StateGraph, END, START, add_messages
 from langchain_core.messages import BaseMessage, HumanMessage
 
@@ -63,6 +63,12 @@ class AssetExtractionState(TypedDict, total=False):
     current_stage: str
     saved_assets: List[dict]
 
+    # --- 父图状态追踪 ---
+    # 作用：追踪用户当前所处的子图，用于在用户输入时正确路由
+    # 可能值：None（初始）, "chat_and_profile", "proposal_and_refine"
+    # 说明：当用户在 proposal_and_refine 流程中输入时，应该继续留在该流程
+    current_subgraph: Optional[str]
+
 
 # =============================================================================
 # 导出子图创建函数
@@ -90,8 +96,10 @@ def entry_point_router(state: AssetExtractionState) -> str:
     在每次用户输入时首先执行，检查用户是否请求直接进入编辑器。
 
     路由逻辑：
-    - 用户输入包含 "edit"/"editor"/"整理档案" → proposal_and_refine (直接进入编辑器)
+    - 用户输入**仅**包含 "edit"（单独输入这个单词）→ proposal_and_refine (直接进入编辑器)
     - 其他 → chat_and_profile (正常聊天流程)
+
+    注意：只有当用户消息去掉空格后**完全等于** "edit" 时才触发，避免误判。
 
     Args:
         state: 包含 messages 的当前状态
@@ -105,18 +113,23 @@ def entry_point_router(state: AssetExtractionState) -> str:
         print("[EntryPointRouter] 没有消息，进入聊天流程")
         return "chat_and_profile"
 
-    # 获取最后一条消息
-    last_msg = messages[-1]
+    # 获取最后一条用户消息（而不是最后一条消息）
+    last_user_msg = None
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            last_user_msg = msg
+            break
 
-    # 只检查用户消息
-    if isinstance(last_msg, HumanMessage):
-        content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else str(last_msg.content).lower()
+    if not last_user_msg:
+        print("[EntryPointRouter] 没有用户消息，进入聊天流程")
+        return "chat_and_profile"
 
-        # 检查是否是编辑器命令
-        editor_keywords = ["edit", "editor", "整理档案", "整理"]
-        if any(keyword in content for keyword in editor_keywords):
-            print("[EntryPointRouter] 检测到编辑器命令，直接进入编辑器")
-            return "proposal_and_refine"
+    # 去除首尾空格后检查是否完全等于 "edit"
+    content = last_user_msg.content.strip() if hasattr(last_user_msg.content, "strip") else str(last_user_msg.content).strip()
+
+    if content.lower() == "edit":
+        print("[EntryPointRouter] 检测到编辑器命令（用户单独输入 'edit'），直接进入编辑器")
+        return "proposal_and_refine"
 
     print("[EntryPointRouter] 进入聊天流程")
     return "chat_and_profile"
