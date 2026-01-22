@@ -118,6 +118,15 @@ def editor_loader_node(state: EditorState, config: RunnableConfig) -> EditorStat
     """
     print("--- 进入 EditorLoader 节点，正在进货... ---")
 
+    # 打印进入时的状态
+    incoming_messages = state.get("messages", [])
+    print(f"[EditorLoader] DEBUG: 进入时 state.messages 数量 = {len(incoming_messages)}")
+    if incoming_messages:
+        for i, msg in enumerate(incoming_messages[-3:]):  # 打印最后3条消息
+            msg_type = msg.type if hasattr(msg, 'type') else type(msg).__name__
+            content_preview = str(msg.content)[:100] if hasattr(msg, 'content') else 'N/A'
+            print(f"[EditorLoader] DEBUG:   消息 #{i+1} [{msg_type}]: {content_preview}...")
+
     # 使用 username 解析获取 user_id（与 chat_and_profile 子图保持一致）
     username = _get_username_from_config(config)
     user = get_or_create_user(username)
@@ -197,6 +206,10 @@ def proposer_node(state: EditorState, config: RunnableConfig) -> EditorState:
         if result.analysis_summary:
             print(f"[Proposer] 分析摘要: {result.analysis_summary}")
 
+        # 【调试】打印每条草稿的 source_l1_ids
+        for i, draft in enumerate(current_drafts):
+            print(f"[Proposer] 草稿 #{i+1} source_l1_ids: {draft.source_l1_ids} (类型: {type(draft.source_l1_ids)})")
+
         return {
             "current_drafts": current_drafts,
             "active_index": 0,
@@ -272,6 +285,14 @@ def human_node(state: EditorState, config: RunnableConfig) -> EditorState:
     # 【暂停阶段】挂起等待指令
     # 程序运行到这里会完全停止
     # value 参数的内容可以在 LangGraph Studio 或 checkpointer 里看到
+    print(f"[Human Node] DEBUG: 准备调用 interrupt()...")
+    print(f"[Human Node] DEBUG: 当前 state.messages 数量 = {len(state.get('messages', []))}")
+    if state.get('messages'):
+        for i, msg in enumerate(state.get('messages', [])[-3:]):  # 打印最后3条消息
+            msg_type = msg.type if hasattr(msg, 'type') else type(msg).__name__
+            content_preview = str(msg.content)[:100] if hasattr(msg, 'content') else 'N/A'
+            print(f"[Human Node] DEBUG:   消息 #{i+1} [{msg_type}]: {content_preview}...")
+
     user_feedback_payload = interrupt(value={
         "task": "error_recovery" if save_error else "review",
         "draft_index": idx,
@@ -284,12 +305,14 @@ def human_node(state: EditorState, config: RunnableConfig) -> EditorState:
     # user_feedback_payload 就是 ChatService 发送过来的 {"messages": [HumanMessage(...)]}
     print(f"[Human Node] 收到指令，继续运行...")
     print(f"[Human Node] DEBUG: 收到的 payload 类型 = {type(user_feedback_payload)}")
+    print(f"[Human Node] DEBUG: payload 值 = {user_feedback_payload}")
     if isinstance(user_feedback_payload, dict):
         print(f"[Human Node] DEBUG: payload keys = {user_feedback_payload.keys()}")
         if "messages" in user_feedback_payload:
             print(f"[Human Node] DEBUG: messages 数量 = {len(user_feedback_payload['messages'])}")
             if user_feedback_payload["messages"]:
                 last_msg = user_feedback_payload["messages"][-1]
+                print(f"[Human Node] DEBUG: 最后一条消息类型 = {type(last_msg).__name__}")
                 print(f"[Human Node] DEBUG: 最后一条消息内容 = '{last_msg.content}'")
 
     # 【更新 State】
@@ -342,46 +365,70 @@ def route_after_saver(state: EditorState) -> Literal["human_node", "__end__"]:
         return route_scheduler(state)
 
 
-def route_user_intent(state: EditorState) -> Literal["refiner_node", "single_saver_node"]:
+def route_user_intent(state: EditorState) -> Literal["refiner_node", "skipper_node", "single_saver_node"]:
     """
     Router 边：根据用户反馈决定下一步
 
     判断逻辑：
     - 如果处于错误恢复模式 (save_error 不为 None):
       - "retry" -> single_saver_node (重试保存)
-      - "skip" -> single_saver_node (由 SingleSaver 检测并跳过)
+      - "skip" -> skipper_node (跳过)
     - 正常审核模式:
-      - 用户输入包含 "确认"/"通过"/"ok"/"1" -> single_saver_node (保存)
+      - 用户输入包含 "确认"/"通过"/"ok" -> single_saver_node (保存)
+      - 用户输入包含 "放弃"/"skip" -> skipper_node (跳过)
       - 其他 -> refiner_node (修改)
     """
     messages = state.get("messages", [])
     save_error = state.get("save_error")
+    print(f"[Router] DEBUG: ========== route_user_intent 开始 ==========")
     print(f"[Router] DEBUG: messages 数量 = {len(messages)}, save_error={save_error is not None}")
 
     if not messages:
         # 没有用户消息，默认返回 refiner（防御性编程）
         print("[Router] DEBUG: 没有用户消息，默认返回 refiner")
+        print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
         return "refiner_node"
 
     last_msg = messages[-1]
+    print(f"[Router] DEBUG: 最后一条消息类型 = {type(last_msg).__name__}")
+    print(f"[Router] DEBUG: 最后一条消息 type 属性 = {last_msg.type if hasattr(last_msg, 'type') else 'N/A'}")
+
     content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else last_msg.content
-    print(f"[Router] DEBUG: 最后一条消息内容 = '{content}'")
+    content_preview = str(content)[:100] if content else 'Empty'
+    print(f"[Router] DEBUG: 最后一条消息内容（前100字符） = '{content_preview}'")
 
     # 【错误恢复模式路由】
     if save_error:
-        # 无论是 retry 还是 skip，都进入 SingleSaver
-        # SingleSaver 会检查用户指令决定是重试还是跳过
-        print("[Router] 错误恢复模式，进入 SingleSaver 处理")
-        return "single_saver_node"
+        retry_keywords = ["retry", "重试"]
+        if any(keyword in content for keyword in retry_keywords):
+            print("[Router] 错误恢复模式：用户选择重试，进入 SingleSaver")
+            print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
+            return "single_saver_node"
+        else:
+            print("[Router] 错误恢复模式：用户选择跳过，进入 Skipper")
+            print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
+            return "skipper_node"
 
     # 【正常审核模式路由】
-    confirm_keywords = ["确认", "通过", "ok", "好的", "1", "yes", "save", "confirm"]
-    if any(keyword in content for keyword in confirm_keywords):
+    # 精确匹配指令：用户只输入指定命令时才触发
+    content_trimmed = content.strip()
+
+    # 跳过指令：只输入 "skip"
+    if content_trimmed == "skip":
+        print("[Router] 用户放弃本条草稿，进入 Skipper")
+        print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
+        return "skipper_node"
+
+    # 确认指令：只输入 "ok" 或 "确认"
+    if content_trimmed in ("ok", "确认"):
         print("[Router] 用户确认，进入 SingleSaver")
+        print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
         return "single_saver_node"
-    else:
-        print("[Router] 用户要求修改，进入 Refiner")
-        return "refiner_node"
+
+    # 默认为修改意图
+    print("[Router] 用户要求修改，进入 Refiner")
+    print(f"[Router] DEBUG: ========== route_user_intent 结束 ==========")
+    return "refiner_node"
 
 
 def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
@@ -399,6 +446,8 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
     idx = state.get("active_index", 0)
     drafts = state.get("current_drafts", [])
 
+    print(f"[Refiner] DEBUG: active_index = {idx}, drafts 数量 = {len(drafts)}")
+
     if idx >= len(drafts):
         print("[Refiner] 索引超出范围")
         return state
@@ -406,12 +455,15 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
     current_draft = drafts[idx]
     messages = state.get("messages", [])
 
+    print(f"[Refiner] DEBUG: messages 数量 = {len(messages)}")
+
     if not messages:
         print("[Refiner] 没有用户修改意见")
         return state
 
     user_instruction = messages[-1].content
-    print(f"[Refiner] 修改第 {idx + 1} 条草稿，用户意见: {user_instruction}")
+    instruction_preview = str(user_instruction)[:100] if user_instruction else 'Empty'
+    print(f"[Refiner] 修改第 {idx + 1} 条草稿，用户意见（前100字符）: {instruction_preview}...")
 
     try:
         llm = get_llm()
@@ -429,7 +481,9 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
             HumanMessage(content=user_prompt)
         ]
 
+        print(f"[Refiner] DEBUG: 开始调用 LLM 修改草稿...")
         refined_draft: ProfileItemSchema = structured_llm.invoke(messages_llm)
+        print(f"[Refiner] DEBUG: LLM 返回结果: {refined_draft}")
 
         # 原地更新
         drafts[idx] = ProfileItemSchema(
@@ -440,6 +494,7 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
         )
 
         print(f"[Refiner] 修改完成")
+        print(f"[Refiner] DEBUG: 更新后的草稿内容: {drafts[idx].standard_content[:100]}...")
 
         # 注意：不更新 active_index，不清空 messages，方便继续多轮对话
         return {
@@ -452,20 +507,53 @@ def refiner_node(state: EditorState, config: RunnableConfig) -> EditorState:
         return state
 
 
+def skipper_node(state: EditorState, config: RunnableConfig) -> EditorState:
+    """
+    Skipper 节点：跳过当前草稿
+
+    核心职责：
+    1. 跳过 current_drafts[active_index]，不保存到数据库
+    2. active_index += 1
+    3. 清空 messages 和 save_error
+
+    适用场景：
+    - 正常审核模式：用户输入"放弃"/"skip"
+    - 错误恢复模式：保存失败后用户选择跳过
+
+    设计原则：单一职责，只负责跳过逻辑，不耦合保存功能
+    """
+    print("--- 进入 Skipper 节点 ---")
+
+    idx = state.get("active_index", 0)
+    drafts = state.get("current_drafts", [])
+
+    if idx < len(drafts):
+        current_draft = drafts[idx]
+        print(f"[Skipper] 跳过第 {idx + 1} 条草稿: {current_draft.section_name}")
+    else:
+        print(f"[Skipper] 索引 {idx} 超出范围，直接前进")
+
+    next_index = idx + 1
+    print(f"[Skipper] 前进到索引 {next_index}")
+
+    return {
+        "active_index": next_index,
+        "save_error": None,  # 清除错误状态（如果存在）
+        "messages": []
+    }
+
+
 def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState:
     """
     SingleSaver 节点：即时存档员
 
     核心职责：
-    1. 检查用户指令（错误恢复模式下的 skip）
-    2. 锁定 current_drafts[active_index]
-    3. 写入 L2 profile_sections 表
-    4. 核销对应的 L1 观察（状态翻转为 promoted）
-    5. active_index += 1，清空 messages
+    1. 锁定 current_drafts[active_index]
+    2. 写入 L2 profile_sections 表
+    3. 核销对应的 L1 观察（状态翻转为 promoted）
+    4. active_index += 1，清空 messages
 
-    错误恢复模式：
-    - 如果 save_error 不为 None 且用户输入 "skip"，则跳过当前草稿
-    - 如果 save_error 不为 None 且用户输入 "retry"，则重试保存
+    设计原则：单一职责，只负责保存逻辑，跳过功能由 Skipper 节点处理
 
     这是实现"滚动更新"的第二步：用掉的被踢出。
     """
@@ -473,27 +561,6 @@ def single_saver_node(state: EditorState, config: RunnableConfig) -> EditorState
 
     idx = state.get("active_index", 0)
     drafts = state.get("current_drafts", [])
-    save_error = state.get("save_error")
-
-    # 检查是否需要跳过（错误恢复模式）
-    if save_error:
-        messages = state.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            content = last_msg.content.lower() if hasattr(last_msg.content, "lower") else ""
-            skip_keywords = ["skip", "跳过", "放弃"]
-            if any(keyword in content for keyword in skip_keywords):
-                print(f"[SingleSaver] 错误恢复：用户选择跳过第 {idx + 1} 条草稿")
-                next_index = idx + 1
-                return {
-                    "active_index": next_index,
-                    "save_error": None,  # 清除错误状态
-                    "messages": []
-                }
-            else:
-                print(f"[SingleSaver] 错误恢复：用户选择重试保存第 {idx + 1} 条草稿")
-                # 清除错误状态，继续正常保存流程
-                save_error = None
 
     if idx >= len(drafts):
         print("[SingleSaver] 索引超出范围")

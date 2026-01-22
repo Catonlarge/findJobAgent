@@ -14,6 +14,9 @@ Proposal & Refine 子图定义 (人生说明书编辑器)
         ROUTER -->|修改| REFINER[Refiner]
         REFINER --> HUMAN
 
+        ROUTER -->|放弃| SKIPPER[Skipper]
+        SKIPPER --> SCHEDULER
+
         ROUTER -->|确认| SAVER[SingleSaver]
         SAVER --> SCHEDULER
 
@@ -26,7 +29,8 @@ Proposal & Refine 子图定义 (人生说明书编辑器)
     4. Human: 展示 current_drafts[active_index]，等待用户反馈
     5. Router: 根据用户意图路由（修改/确认/跳过）
     6. Refiner: 修改当前草稿（可选），返回 Human
-    7. SingleSaver: 保存当前草稿，active_index += 1，返回 Scheduler
+    7. Skipper: 跳过当前草稿，active_index += 1，返回 Scheduler
+    8. SingleSaver: 保存当前草稿，active_index += 1，返回 Scheduler
 """
 
 from langgraph.graph import StateGraph, END
@@ -37,6 +41,7 @@ from app.agent.subgraphs.asset_extraction.proposal_and_refine.nodes import (
     proposer_node,
     human_node,
     refiner_node,
+    skipper_node,
     single_saver_node,
     route_scheduler,
     route_after_saver,
@@ -73,6 +78,7 @@ def create_proposal_and_refine_subgraph() -> StateGraph:
     workflow.add_node("proposer_node", proposer_node)
     workflow.add_node("human_node", human_node)
     workflow.add_node("refiner_node", refiner_node)
+    workflow.add_node("skipper_node", skipper_node)
     workflow.add_node("single_saver_node", single_saver_node)
 
     # 设置入口点：从 editor_loader_node 开始
@@ -97,12 +103,23 @@ def create_proposal_and_refine_subgraph() -> StateGraph:
         route_user_intent,
         {
             "refiner_node": "refiner_node",
+            "skipper_node": "skipper_node",
             "single_saver_node": "single_saver_node",
         }
     )
 
     # 添加边：refiner -> human (循环返回，继续修改)
     workflow.add_edge("refiner_node", "human_node")
+
+    # 添加条件边：skipper -> scheduler (跳过后检查是否还有下一条)
+    workflow.add_conditional_edges(
+        "skipper_node",
+        route_scheduler,
+        {
+            "human_node": "human_node",
+            "__end__": END,
+        }
+    )
 
     # 添加边：single_saver -> after_saver (保存后检查错误并决定下一步)
     workflow.add_conditional_edges(

@@ -290,7 +290,10 @@ class TestSingleSaverNode:
         ).all()
 
         assert len(saved_sections) == 1
-        assert saved_sections[0].content["standard_content"] == "我掌握 Python 和 FastAPI"
+        # single_saver_node 将草稿保存为 content["drafts"] 结构
+        assert "drafts" in saved_sections[0].content
+        assert len(saved_sections[0].content["drafts"]) == 1
+        assert saved_sections[0].content["drafts"][0]["standard_content"] == "我掌握 Python 和 FastAPI"
 
         # 验证翻页逻辑
         assert result["active_index"] == 1
@@ -383,7 +386,10 @@ class TestSingleSaverNode:
         ).all()
 
         assert len(saved_sections) == 1
-        assert saved_sections[0].content["standard_content"] == "测试 username 解析"
+        # single_saver_node 将草稿保存为 content["drafts"] 结构
+        assert "drafts" in saved_sections[0].content
+        assert len(saved_sections[0].content["drafts"]) == 1
+        assert saved_sections[0].content["drafts"][0]["standard_content"] == "测试 username 解析"
 
     def test_single_saver_handles_index_out_of_range(
         self, test_db_session, test_user

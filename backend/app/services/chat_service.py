@@ -99,7 +99,7 @@ class ChatService:
         4. 检查是否有未完成的 LangGraph interrupt
         5. 如果有 interrupt，使用 Command(resume=...) 恢复执行
         6. 如果没有 interrupt，正常调用图
-        7. 流式输出 AI 回复
+        7. 流式输出 AI 回复（带消息 ID 去重，防止重复 yield）
         8. 写入数据库（AI 消息）
         9. 更新会话 updated_at
 
@@ -107,6 +107,11 @@ class ChatService:
         - 使用 graph.get_state(config) 检查是否有未完成的 interrupt
         - 如果 state.next 不为空，说明有 interrupt，使用 Command(resume=...) 恢复
         - 这样可以避免重新执行整个图，直接从中断点继续
+
+        消息去重机制（修复流式重复问题）：
+        - 使用 processed_message_ids 记录已处理过的消息 ID
+        - 防止后续子图节点（如 Proposer）触发事件时重复 yield 同一条 AI 消息
+        - 解决 LangGraph stream_mode="values" 导致的重复输出问题
 
         Args:
             user_text: 用户输入文本
@@ -153,6 +158,69 @@ class ChatService:
         ai_message_obj: Optional[AIMessage] = None
         full_response = ""
 
+        # 【关键修改】预加载历史消息 UUIDs，赋予去重逻辑"历史记忆"
+        # 治本方案：解决 LangGraph stream_mode="values" 输出全量状态导致的历史消息重复处理问题
+        # LangGraph 在 resume 时会重新输出完整 State（包含历史消息），如果不预加载历史 UUIDs，
+        # 瞬态的 processed_message_ids set() 无法识别已存在的历史消息，导致重复 yield 和重复存库
+        from sqlmodel import select
+        from app.models.message import ChatMessage
+
+        with Session(get_engine()) as session:
+            existing_uuids_result = session.exec(
+                select(ChatMessage.msg_uuid)
+                .where(ChatMessage.session_id == self.session_db_id)
+                .where(ChatMessage.msg_uuid.isnot(None))  # 排除空 UUID
+            ).all()
+            # all() 返回的是 Row 对象元组，需要提取第一列
+            processed_message_ids = {row[0] for row in existing_uuids_result}
+
+        print(f"[ChatService] 预加载历史消息 UUIDs: 共 {len(processed_message_ids)} 条")
+
+        # 【重要】将本次用户消息的 UUID 也加入已处理集合
+        # 因为我们在第 2 步就已经存库了，防止流中回显时重复处理
+        processed_message_ids.add(user_msg_uuid)
+
+        def process_event(event_data: dict) -> Optional[str]:
+            """
+            处理 LangGraph stream 事件，提取 AI 消息内容
+
+            Args:
+                event_data: LangGraph stream 事件数据
+
+            Returns:
+                Optional[str]: 如果有新的 AI 消息，返回内容；否则返回 None
+            """
+            nonlocal ai_message_obj, full_response
+
+            if "messages" not in event_data:
+                return None
+
+            messages = event_data["messages"]
+            if not messages:
+                return None
+
+            latest_msg = messages[-1]
+
+            # 仅处理 AI 消息，且必须是未处理过的 ID
+            if isinstance(latest_msg, AIMessage):
+                msg_id = latest_msg.id
+
+                # 检查是否已处理过这条消息
+                if msg_id in processed_message_ids:
+                    print(f"[ChatService] DEBUG: 跳过重复消息 ID={msg_id}")
+                    return None
+
+                # 标记为已处理
+                processed_message_ids.add(msg_id)
+                print(f"[ChatService] DEBUG: 处理新 AI 消息 ID={msg_id}")
+
+                ai_message_obj = latest_msg
+                content = latest_msg.content
+                if isinstance(content, str):
+                    return content
+
+            return None
+
         if has_interrupt:
             # 6a. 有 interrupt，使用 Command(resume=...) 恢复执行
             print(f"[ChatService] 检测到未完成的 interrupt，使用 Command(resume=...) 恢复执行")
@@ -174,36 +242,22 @@ class ChatService:
                 config=config,
                 stream_mode="values"
             ):
-                # 捕获 AI 生成的消息
-                if "messages" in event:
-                    messages = event["messages"]
-                    if messages:
-                        latest_msg = messages[-1]
-                        if isinstance(latest_msg, AIMessage):
-                            ai_message_obj = latest_msg
-                            content = latest_msg.content
-                            if isinstance(content, str):
-                                # 流式输出
-                                yield content
-                                full_response = content
+                # 【修改】使用去重逻辑处理事件
+                content = process_event(event)
+                if content:
+                    yield content
+                    full_response = content
         else:
             # 6b. 没有 interrupt，正常调用图
             print(f"[ChatService] 正常执行流程")
             inputs = {"messages": [user_message]}
 
             for event in graph.stream(inputs, config=config, stream_mode="values"):
-                # 捕获 AI 生成的消息
-                if "messages" in event:
-                    messages = event["messages"]
-                    if messages:
-                        latest_msg = messages[-1]
-                        if isinstance(latest_msg, AIMessage):
-                            ai_message_obj = latest_msg
-                            content = latest_msg.content
-                            if isinstance(content, str):
-                                # 流式输出
-                                yield content
-                                full_response = content
+                # 【修改】使用去重逻辑处理事件
+                content = process_event(event)
+                if content:
+                    yield content
+                    full_response = content
 
         # 7. 写入数据库（AI 消息）
         if ai_message_obj:

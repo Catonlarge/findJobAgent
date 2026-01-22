@@ -201,7 +201,12 @@ class SessionRepository:
         msg_uuid: Optional[str] = None
     ) -> ChatMessage:
         """
-        创建新消息
+        创建新消息（幂等性保证：如果 msg_uuid 已存在则返回现有消息）
+
+        兜底逻辑（Defense in Depth）：
+        - 如果 msg_uuid 已存在于数据库，直接返回现有消息（避免 UNIQUE constraint 错误）
+        - 这种情况常见于 LangGraph resume 流程，消息可能已通过 checkpoint 机制存入
+        - DB 层的唯一性约束是最后一道防线，防止并发竞态条件
 
         Args:
             session_id: 会话 ID
@@ -213,8 +218,17 @@ class SessionRepository:
             msg_uuid: LangChain Message UUID（可选，用于异步关联）
 
         Returns:
-            创建的 ChatMessage 对象
+            创建的或已存在的 ChatMessage 对象
         """
+        # 幂等性检查：如果 msg_uuid 已存在，直接返回现有消息
+        if msg_uuid:
+            existing = self.session.exec(
+                select(ChatMessage).where(ChatMessage.msg_uuid == msg_uuid)
+            ).first()
+            if existing:
+                print(f"[SessionRepository] 消息 UUID={msg_uuid} 已存在，跳过存储（幂等性保证）")
+                return existing
+
         message = ChatMessage(
             session_id=session_id,
             role=role,
